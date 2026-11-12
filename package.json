@@ -1,0 +1,31 @@
+{
+  "name": "boggo",
+  "version": "0.0.1",
+  "description": "Boggo Cloud -komentorivityökalu (tulossa)",
+  "license": "MIT",
+  "author": "Boggo Oy",
+  "homepage": "https://cloud.boggo.fi",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BoggoOy/boggo-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/BoggoOy/boggo-cli/issues"
+  },
+  "type": "module",
+  "bin": {
+    "boggo": "bin/boggo.js"
+  },
+  "files": [
+    "bin"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "boggo",
+    "boggo-cloud",
+    "cli",
+    "deploy"
+  ]
+}
