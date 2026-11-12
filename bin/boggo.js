@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-// Boggo CLI (tulossa). Tämä versio varaa paketin nimen: se kertoo vain, että työkalu on tulossa, ja tulostaa versionumeron.
-import { readFileSync } from "node:fs";
+// Boggo CLI. Ohjelma on kansiossa src/; tämä tiedosto vain käynnistää sen ja asettaa paluukoodin.
+import { main } from "../src/cli.js";
 
-const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-const args = process.argv.slice(2);
-
-if (args.includes("--version") || args.includes("-v")) {
-  console.log(version);
-} else {
-  console.log("Boggo CLI on tulossa. Seuraa: https://cloud.boggo.fi");
-  console.log(`Versio ${version}`);
+// Suljettu putki (esim. boggo help | head -1) ei ole virhe: lopetetaan hiljaa ilman pinoa.
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on("error", (error) => {
+    if (error.code !== "EPIPE") throw error;
+    process.exit(process.exitCode ?? 0);
+  });
 }
+
+process.exitCode = await main();

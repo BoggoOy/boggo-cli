@@ -1,7 +1,7 @@
 {
   "name": "boggo",
-  "version": "0.0.1",
-  "description": "Boggo Cloud -komentorivityökalu (tulossa)",
+  "version": "0.0.2",
+  "description": "Boggo Cloud -komentorivityökalu (tulossa) / Boggo Cloud command-line tool (coming soon)",
   "license": "MIT",
   "author": "Boggo Oy",
   "homepage": "https://cloud.boggo.fi",
@@ -17,8 +17,12 @@
     "boggo": "bin/boggo.js"
   },
   "files": [
-    "bin"
+    "bin",
+    "src"
   ],
+  "scripts": {
+    "test": "node --test"
+  },
   "engines": {
     "node": ">=18"
   },
