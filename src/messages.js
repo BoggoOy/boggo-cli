@@ -229,7 +229,7 @@ export const COMMANDS = {
       options: [
         ["--name <nimi>", "Projektin nimi (osoite <nimi>.boggo.app)"],
         ["--use verkkosivu|rajapinta", "Mitä sovellus tekee"],
-        ["--size perus|iso", "Koko (oletus perus)"],
+        ["--size pieni|perus|iso", "Koko (oletus perus)"],
         ["--org <tunniste>", "Organisaatio, jos kuulut useampaan"],
         ["--yes", "Älä kysy mitään (oletukset)"],
       ],
@@ -248,7 +248,7 @@ export const COMMANDS = {
       options: [
         ["--name <name>", "Project name (address <name>.boggo.app)"],
         ["--use site|api", "What the app does"],
-        ["--size basic|large", "Size (default basic)"],
+        ["--size small|basic|large", "Size (default basic)"],
         ["--org <slug>", "Organization, if you belong to several"],
         ["--yes", "Don't ask anything (defaults)"],
       ],

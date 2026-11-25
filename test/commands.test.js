@@ -207,3 +207,15 @@ test("komentojen tekstit molemmilla kielillä samoilla avaimilla", async () => {
   const shape = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, typeof v === "object" ? Object.keys(v).sort() : typeof v]));
   assert.deepEqual(shape(CMD.en), shape(CMD.fi));
 });
+
+test("init --size pieni: koko Pieni (Donin päätös 26.11.2026)", async () => {
+  const portal = fakePortal();
+  const home = mkdtempSync(join(tmpdir(), "boggo-koti-"));
+  const cwd = project();
+  await run(["login"], { home, cwd, portal });
+  const r = await run(["init", "--name", "pieni-kauppa", "--size", "pieni", "--yes"], { home, cwd, portal });
+  assert.equal(r.code, 0, r.err);
+  const created = portal.calls.find((c) => c.path === "/api/cli/projektit" && c.method === "POST");
+  assert.equal(JSON.parse(created.body).koko, "pieni");
+  assert.equal((await run(["init", "--name", "x", "--size", "jattilainen", "--yes", "--force"], { home, cwd, portal })).code, 1);
+});

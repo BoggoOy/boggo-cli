@@ -297,7 +297,7 @@ async function init(ctx) {
 }
 
 const normalizeUse = (v) => ({ verkkosivu: "verkkosivu", site: "verkkosivu", web: "verkkosivu", rajapinta: "rajapinta", api: "rajapinta" })[String(v).toLowerCase()] ?? null;
-const normalizeSize = (v) => ({ perus: "perus", basic: "perus", iso: "iso", large: "iso" })[String(v).toLowerCase()] ?? null;
+const normalizeSize = (v) => ({ pieni: "pieni", small: "pieni", perus: "perus", basic: "perus", iso: "iso", large: "iso" })[String(v).toLowerCase()] ?? null;
 
 async function linkTo(ctx, org, deployable) {
   const { t } = ctx;
