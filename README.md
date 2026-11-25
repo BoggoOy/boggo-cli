@@ -1,10 +1,15 @@
 # Boggo CLI
 
-Boggo Cloudin (https://cloud.boggo.fi) komentorivityökalu. **Useimmat komennot ovat vielä tulossa.**
-_Boggo Cloud command-line tool. Most commands are coming soon. English below._
+Boggo Cloudin (https://cloud.boggo.fi) komentorivityökalu: luo projekti ja julkaise se omalta koneelta.
+_Boggo Cloud command-line tool. English below._
 
-Kun työkalu valmistuu, sillä voi kirjautua Boggo Cloudiin, yhdistää kansion projektiin, julkaista sovelluksen, hakea
-ympäristömuuttujat ja seurata lokeja suoraan omalta koneelta. Kaikki samat toiminnot ovat myös portaalissa.
+```sh
+npx boggo login          # kirjaudu selaimella
+npx boggo init           # luo projekti tästä kansiosta (tai valitse olemassa oleva)
+npx boggo push --prod    # julkaise: https://<nimi>.boggo.app
+```
+
+`boggo push` ilman `--prod` rakentaa julkaisematta. Kaikki samat toiminnot ovat myös portaalissa.
 
 ## Asennus
 
@@ -22,12 +27,17 @@ Tai ilman asennusta: `npx boggo help`. Vaatii Node.js 18:n tai uudemman.
 | `boggo help [komento]` | Kaikki komennot tai yhden komennon ohje (myös `--help`, `-h`) | toimii |
 | `boggo --version` | Versio (myös `-v`) | toimii |
 | `boggo config kieli [fi\|en]` | Vaihda kieli | toimii |
-| `boggo login`, `logout`, `whoami` | Kirjautuminen selaimella, uloskirjautuminen, kirjautunut käyttäjä | tulossa |
-| `boggo projects`, `link`, `open` | Projektit, kansion yhdistäminen projektiin, projektin avaus selaimessa | tulossa |
-| `boggo push` | Rakenna ja tarkista julkaisematta | tulossa |
-| `boggo push --prod` | Rakenna ja julkaise tuotantoon | tulossa |
+| `boggo login`, `logout`, `whoami` | Kirjautuminen selaimella, uloskirjautuminen, kirjautunut käyttäjä | toimii |
+| `boggo init` | Luo projekti tästä kansiosta (tunnistaa sovelluksen, kysyy nimen, käytön ja koon) | toimii |
+| `boggo projects`, `link`, `open` | Projektit, kansion yhdistäminen projektiin, projektin avaus selaimessa | toimii |
+| `boggo push` | Rakenna ja tarkista julkaisematta | toimii |
+| `boggo push --prod` | Rakenna ja julkaise tuotantoon | toimii |
 | `boggo env pull`, `env ls` | Ympäristömuuttujat tiedostoon `.env.local`, muuttujien lista | tulossa |
 | `boggo logs` | Sovelluksen lokit | tulossa |
+
+Paketista jäävät pois `.git`, `node_modules`, `.boggo`, `.env`-tiedostot (paitsi esimerkit), kehysten välimuistit (`.next` ym.),
+`.gitignoren` ja `.boggoignoren` tiedostot sekä yli 50 Mt:n tiedostot; raja 100 Mt pakattuna. Kirjautumistunnus on tiedostossa
+`~/.boggo/tunnus.json` (600); CI:ssä ympäristömuuttuja `BOGGO_TOKEN`. Kansion yhteys on kansiossa `.boggo` (lisätään .gitignoreen).
 
 Tuleva komento kertoo olevansa tulossa ja päättyy paluukoodiin 1. Tuntematon komento: `Tuntematon komento: x. Katso boggo help.`
 ja paluukoodi 1.
@@ -49,9 +59,9 @@ Värit vain päätteessä; `NO_COLOR` poistaa ne.
 
 ## English
 
-Boggo Cloud command-line tool. Install with `npm i -g boggo` (Node.js 18 or newer) and run `boggo help`. Working now: `help`,
-`--version` and `config language`; the other commands (`login`, `logout`, `whoami`, `projects`, `link`, `push`, `push --prod`,
-`env pull`, `env ls`, `logs`, `open`) are coming soon.
+Boggo Cloud command-line tool. Install with `npm i -g boggo` (Node.js 18 or newer) and run `boggo help`. Create and deploy a
+project: `boggo login`, then in your project folder `boggo init` and `boggo push --prod` (without `--prod` it only builds). Also
+`whoami`, `projects`, `link`, `open` and `logout`; `env pull`, `env ls` and `logs` are coming soon. In CI set `BOGGO_TOKEN`.
 
 On first use in a terminal, the tool asks for your language and saves it in `~/.boggo/config.json`. Change it with
 `boggo config language`, or use `--lang fi|en` for one command. In pipes and CI it never asks: it uses `BOGGO_LANG`, then the

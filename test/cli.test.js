@@ -19,14 +19,19 @@ function sink(isTTY = false) {
 }
 
 // Ajaa CLI:n muistissa. Oletuksena putki (ei pääte), tyhjä koti ja ei kieliasetuksia.
-async function cli(argv, { env = {}, tty = false, input, home } = {}) {
+// Testit eivät koskaan ota yhteyttä oikeaan Boggo Cloudiin: oletuksena verkko on kielletty.
+const noNetwork = async () => {
+  throw new Error("verkko kielletty testeissä");
+};
+
+async function cli(argv, { env = {}, tty = false, input, home, fetch = noNetwork, cwd, sleep = async () => {} } = {}) {
   const stdout = sink(tty);
   const stderr = sink(tty);
   const stdin = new PassThrough();
   stdin.isTTY = tty;
   if (input !== undefined) stdin.end(input);
   const dir = home ?? mkdtempSync(join(tmpdir(), "boggo-test-"));
-  const code = await main({ argv, env, stdout, stderr, stdin, home: dir });
+  const code = await main({ argv, env, stdout, stderr, stdin, home: dir, fetch, cwd: cwd ?? dir, sleep });
   return { code, out: stdout.text, err: stderr.text, home: dir };
 }
 
@@ -62,9 +67,13 @@ for (const [lang, env] of [["fi", FI], ["en", EN]]) {
     assert.ok(out.includes(t.tagline));
     assert.ok(out.includes(t.usageLine));
     for (const group of GROUPS) assert.ok(out.includes(t.groups[group.id]), group.id);
-    for (const cmd of ["login", "logout", "whoami", "projects", "link", "push", "push --prod", "env pull", "env ls", "logs", "open"]) {
+    for (const cmd of ["env pull", "env ls", "logs"]) {
       const line = out.split("\n").find((l) => l.trim().startsWith(`${cmd} `) && l.includes(t.coming));
       assert.ok(line, `${cmd} merkitty tulevaksi`);
+    }
+    for (const cmd of ["login", "logout", "whoami", "init", "projects", "link", "push", "push --prod", "open"]) {
+      const line = out.split("\n").find((l) => l.trim().startsWith(`${cmd} `));
+      assert.ok(line && !line.includes(t.coming), `${cmd} toimii`);
     }
     const helpLine = out.split("\n").find((l) => l.trim().startsWith("help "));
     assert.ok(helpLine && !helpLine.includes(t.coming), "help toimii");
@@ -122,9 +131,6 @@ for (const [lang, env] of [["fi", FI], ["en", EN]]) {
 
   test(`[${lang}] tulevat komennot: "tulossa" ja paluukoodi 1`, async () => {
     for (const [argv, shown] of [
-      [["login"], "login"],
-      [["push"], "push"],
-      [["push", "--prod"], "push --prod"],
       [["env", "pull"], "env pull"],
       [["env", "ls"], "env ls"],
       [["logs", "--follow"], "logs"],
@@ -316,11 +322,17 @@ test("argumenttien jäsennys", () => {
   assert.deepEqual(parseArgs(["push", "--prod", "--lang", "en"]), {
     positionals: ["push"],
     flags: ["--prod"],
+    options: { prod: true },
     help: false,
     version: false,
     lang: "en",
     langMissing: false,
+    badOption: null,
+    missingValue: null,
   });
+  assert.deepEqual(parseArgs(["init", "--name=kauppa", "--size", "iso", "-y"]).options, { name: "kauppa", size: "iso", yes: true });
+  assert.equal(parseArgs(["push", "--projekti"]).badOption, "--projekti");
+  assert.equal(parseArgs(["push", "--project"]).missingValue, "--project");
   assert.equal(parseArgs(["-h"]).help, true);
   assert.deepEqual(parseArgs(["--", "--help"]).positionals, ["--help"]);
 });
