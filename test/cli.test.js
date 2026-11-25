@@ -45,7 +45,7 @@ test("--version ja -v tulostavat vain version", async () => {
     assert.equal(r.out, `${VERSION}\n`);
     assert.equal(r.err, "", "versio ei kysy kieltä");
   }
-  assert.equal(VERSION, "0.0.2");
+  assert.equal(VERSION, "0.1.0");
 });
 
 test("help, --help ja -h tulostavat saman ohjeen", async () => {
