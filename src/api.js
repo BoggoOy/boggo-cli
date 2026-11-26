@@ -15,8 +15,10 @@ export function portalUrl(env) {
 const tokenPath = (home) => join(configDir(home), "tunnus.json");
 
 // Tallennettu kirjautuminen { tunnus, portaali, sahkoposti }; null = ei kirjautunut. BOGGO_TOKEN ohittaa.
+// Virheellinen BOGGO_TOKEN ei ole sama kuin "ei kirjautunut": { env: true, invalid: true }, jotta käyttäjälle voidaan kertoa
+// oikea syy (muuten boggo login onnistuisi, mutta muuttuja peittäisi tallennetun tunnuksen edelleen).
 export function readLogin(home, env) {
-  if (env.BOGGO_TOKEN) return TOKEN_RE.test(env.BOGGO_TOKEN.trim()) ? { tunnus: env.BOGGO_TOKEN.trim(), portaali: portalUrl(env), env: true } : null;
+  if (env.BOGGO_TOKEN) return TOKEN_RE.test(env.BOGGO_TOKEN.trim()) ? { tunnus: env.BOGGO_TOKEN.trim(), portaali: portalUrl(env), env: true } : { env: true, invalid: true };
   try {
     const v = JSON.parse(readFileSync(tokenPath(home), "utf8"));
     if (!TOKEN_RE.test(v?.tunnus ?? "")) return null;

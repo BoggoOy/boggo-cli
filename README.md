@@ -39,6 +39,9 @@ Paketista jäävät pois `.git`, `node_modules`, `.boggo`, `.env`-tiedostot (pai
 `.gitignoren` ja `.boggoignoren` tiedostot sekä yli 50 Mt:n tiedostot; raja 100 Mt pakattuna. Kirjautumistunnus on tiedostossa
 `~/.boggo/tunnus.json` (600); CI:ssä ympäristömuuttuja `BOGGO_TOKEN`. Kansion yhteys on kansiossa `.boggo` (lisätään .gitignoreen).
 
+`boggo push` päättyy paluukoodiin 0 vain, kun rakennus tai julkaisu onnistui. Jos julkaisu kestää yli 45 minuuttia tai
+Boggo Cloudiin ei saada yhteyttä 5 minuuttiin, seuranta loppuu paluukoodiin 1 (julkaisu jatkuu portaalissa).
+
 Tuleva komento kertoo olevansa tulossa ja päättyy paluukoodiin 1. Tuntematon komento: `Tuntematon komento: x. Katso boggo help.`
 ja paluukoodi 1.
 
@@ -61,7 +64,8 @@ Värit vain päätteessä; `NO_COLOR` poistaa ne.
 
 Boggo Cloud command-line tool. Install with `npm i -g boggo` (Node.js 18 or newer) and run `boggo help`. Create and deploy a
 project: `boggo login`, then in your project folder `boggo init` and `boggo push --prod` (without `--prod` it only builds). Also
-`whoami`, `projects`, `link`, `open` and `logout`; `env pull`, `env ls` and `logs` are coming soon. In CI set `BOGGO_TOKEN`.
+`whoami`, `projects`, `link`, `open` and `logout`; `env pull`, `env ls` and `logs` are coming soon. In CI set `BOGGO_TOKEN`; `boggo push`
+exits with 0 only when the build or deployment succeeded.
 
 On first use in a terminal, the tool asks for your language and saves it in `~/.boggo/config.json`. Change it with
 `boggo config language`, or use `--lang fi|en` for one command. In pipes and CI it never asks: it uses `BOGGO_LANG`, then the

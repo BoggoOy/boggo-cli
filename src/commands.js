@@ -29,6 +29,7 @@ export function context(io, lang, args, version) {
     cwd: io.cwd ?? process.cwd(),
     fetch: io.fetch ?? fetch,
     sleep: io.sleep ?? sleep,
+    now: io.now ?? Date.now,
     out: (s = "") => io.stdout.write(`${s}\n`),
     err: (s = "") => io.stderr.write(`${s}\n`),
     async ask(question, fallback = "") {
@@ -100,6 +101,7 @@ export async function runCommand(ctx, command, rest) {
 }
 
 function requireLogin(ctx) {
+  if (ctx.login?.invalid) throw new UserError(ctx.t.tokenInvalid);
   if (!ctx.token) throw new UserError(ctx.t.notLoggedIn);
 }
 
@@ -122,7 +124,7 @@ function openBrowser(ctx, url) {
 
 async function login(ctx) {
   const { t } = ctx;
-  if (ctx.login?.env) throw new UserError(t.tokenFromEnv);
+  if (ctx.login?.env) throw new UserError(ctx.login.invalid ? t.tokenInvalid : t.tokenFromEnv);
   ctx.token = null;
   const { data: start } = await ctx.api("POST", "/api/cli/laite", { body: { nimi: deviceName() } });
   ctx.err(t.loginOpen);
@@ -130,8 +132,8 @@ async function login(ctx) {
   ctx.err(t.loginCode(start.kayttajakoodi));
   openBrowser(ctx, start.osoite);
   ctx.err(t.loginWaiting);
-  const deadline = Date.now() + (start.voimassa_s ?? 600) * 1000;
-  while (Date.now() < deadline) {
+  const deadline = ctx.now() + (start.voimassa_s ?? 600) * 1000;
+  while (ctx.now() < deadline) {
     await ctx.sleep((start.valit_s ?? 2) * 1000);
     let res;
     try {
@@ -151,7 +153,7 @@ async function login(ctx) {
 
 async function logout(ctx) {
   const { t } = ctx;
-  if (ctx.login?.env) throw new UserError(t.tokenFromEnv);
+  if (ctx.login?.env) throw new UserError(ctx.login.invalid ? t.tokenInvalid : t.tokenFromEnv);
   if (!ctx.token) {
     ctx.out(t.notLoggedInShort);
     return 0;
@@ -343,6 +345,8 @@ async function target(ctx) {
 }
 
 const STAGES = ["jonossa", "haetaan", "rakennetaan", "siirretaan", "kaynnistetaan"];
+const FOLLOW_MAX_MS = 45 * 60_000;
+const CONNECTION_LOST_MS = 5 * 60_000;
 
 async function push(ctx) {
   const { t } = ctx;
@@ -350,7 +354,8 @@ async function push(ctx) {
   const prod = Boolean(ctx.args.prod);
   const dest = await target(ctx);
 
-  const { entries, skipped } = collect(ctx.cwd);
+  const { entries, skipped, unreadable } = collect(ctx.cwd);
+  if (unreadable.length) throw new UserError(t.unreadable(unreadable.slice(0, 5).map((u) => `${u.path} (${u.code})`), unreadable.length));
   const files = entries.filter((e) => e.type === "file");
   if (!files.length) throw new UserError(t.emptyFolder);
   for (const s of skipped) ctx.err(`${t.warnMark} ${s.reason === "size" ? t.skippedBig(s.path, sizeText(s.size, ctx.lang)) : t.skippedLink(s.path)}`);
@@ -359,19 +364,20 @@ async function push(ctx) {
     pkg = await packEntries(entries);
   } catch (e) {
     if (e.code === "too_big") throw new UserError(t.tooBig(sizeText(UPLOAD_MAX_BYTES, ctx.lang)));
+    if (e.code === "unreadable") throw new UserError(t.unreadable([`${e.path} (${e.reason})`], 1));
     throw e;
   }
   ctx.err(t.uploading(files.length, sizeText(pkg.length, ctx.lang), dest.projekti));
 
   // Uusi projekti voi olla vielä luonnissa: odotetaan enintään 5 min.
   let started;
-  const until = Date.now() + 5 * 60_000;
+  const until = ctx.now() + 5 * 60_000;
   for (;;) {
     try {
       started = (await ctx.api("POST", `/api/cli/projektit/${dest.vmid}/julkaisut`, { org: dest.org, body: pkg, query: { tuotanto: prod ? 1 : undefined }, timeoutMs: 300_000 })).data;
       break;
     } catch (e) {
-      if (e instanceof ApiError && e.status === 409 && /valmis|ready/i.test(e.message) && Date.now() < until) {
+      if (e instanceof ApiError && e.status === 409 && /valmis|ready/i.test(e.message) && ctx.now() < until) {
         ctx.err(t.waitingCreate);
         await ctx.sleep(10_000);
         continue;
@@ -382,17 +388,30 @@ async function push(ctx) {
   const label = prod ? t.deployment(started.numero) : t.build(started.numero);
   ctx.err(t.queued(label, started.sovellus));
 
-  // Seuranta: uusi vaihe kerran, aika vaiheen alusta.
+  // Seuranta: uusi vaihe kerran, aika vaiheen alusta. Seuranta päättyy aina: julkaisu kestää yli FOLLOW_MAX_MS tai
+  // Boggo Cloudiin ei saada yhteyttä CONNECTION_LOST_MS:ään. Kummassakin paluukoodi on 1, koska julkaisun tulos ei ole
+  // tiedossa (CI ei saa tulkita sitä onnistumiseksi).
   const shown = new Set();
-  const began = Date.now();
+  const began = ctx.now();
+  const followUrl = `${ctx.portal}/${dest.projekti}/julkaisut`;
+  let lastOk = began;
   let d;
   for (;;) {
     await ctx.sleep(2000);
+    if (ctx.now() - began > FOLLOW_MAX_MS) {
+      ctx.err(`${t.warnMark} ${t.stillRunning(followUrl)}`);
+      return 1;
+    }
     try {
       d = (await ctx.api("GET", `/api/cli/projektit/${dest.vmid}/julkaisut/${started.numero}`, { org: dest.org })).data;
+      lastOk = ctx.now();
     } catch (e) {
-      if (e instanceof ApiError && (e.status === 0 || e.status >= 500)) continue;
-      throw e;
+      if (!(e instanceof ApiError && (e.status === 0 || e.status >= 500))) throw e;
+      if (ctx.now() - lastOk > CONNECTION_LOST_MS) {
+        ctx.err(`${t.warnMark} ${t.lostTrack(followUrl)}`);
+        return 1;
+      }
+      continue;
     }
     for (const s of d.steps ?? []) {
       if (shown.has(s.vaihe) || !STAGES.includes(s.vaihe)) continue;
@@ -401,12 +420,8 @@ async function push(ctx) {
     }
     const status = d.deployment.status;
     if (status === "valmis" || status === "epaonnistui" || status === "korvattu") break;
-    if (Date.now() - began > 45 * 60_000) {
-      ctx.err(t.stillRunning(`${ctx.portal}/${dest.projekti}/julkaisut`));
-      return 0;
-    }
   }
-  const secs = Math.round((Date.now() - began) / 1000);
+  const secs = Math.round((ctx.now() - began) / 1000);
   if (d.deployment.status === "valmis") {
     if (prod) {
       ctx.out(t.deployed(secs));

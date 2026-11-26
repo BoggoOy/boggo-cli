@@ -1,7 +1,7 @@
 // Kansion paketointi julkaisua varten (boggo push): tar.gz ilman riippuvuuksia. Mukaan eivät tule .git, node_modules, .boggo,
 // .env-tiedostot (paitsi esimerkit), rakennusten välimuistit, .gitignoren ja .boggoignoren tiedostot eikä yli 50 Mt:n tiedostot.
 // Raja 100 Mt pakattuna (Boggo Cloudin raja, megatavu = 1 048 576 tavua). Portaali tarkistaa paketin samoilla säännöillä.
-import { lstatSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
+import { accessSync, constants, lstatSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
 import { join, posix } from "node:path";
 import { createGzip } from "node:zlib";
 
@@ -86,10 +86,13 @@ export function ignored(rules, path, isDir) {
 // Kansion läpikäynti
 
 // Tiedostot ja kansiot paketoitavaksi. Palauttaa entries [{ path, type: "file"|"dir"|"link", size, mode, mtime, link }],
-// skipped (ohitetut isot tiedostot ja ulos osoittavat linkit) ja detect (tunnistuksen tiedostot sisältöineen).
+// skipped (ohitetut isot tiedostot ja ulos osoittavat linkit), unreadable (tiedostot ja kansiot, joita ei voi lukea, esim.
+// root-käyttäjän Docker-kansio; { path, code }) ja detect (tunnistuksen tiedostot sisältöineen). Lukukelvotonta ei ohiteta
+// hiljaa, koska paketista puuttuisi silloin tiedostoja: boggo push kertoo ne, ja ne voi jättää pois .boggoignorella.
 export function collect(root) {
   const entries = [];
   const skipped = [];
+  const unreadable = [];
   const detect = {};
   const readIgnore = (dir, rel) => {
     const out = [];
@@ -107,7 +110,8 @@ export function collect(root) {
     let names;
     try {
       names = readdirSync(dir).sort();
-    } catch {
+    } catch (error) {
+      unreadable.push({ path: rel || ".", code: error.code ?? "EIO" });
       return;
     }
     for (const name of names) {
@@ -124,7 +128,13 @@ export function collect(root) {
       if (!isDir && (ALWAYS_FILES.has(name) || isEnvFile(name))) continue;
       if (ignored(own, path, isDir)) continue;
       if (st.isSymbolicLink()) {
-        const target = readlinkSync(full);
+        let target;
+        try {
+          target = readlinkSync(full);
+        } catch (error) {
+          unreadable.push({ path, code: error.code ?? "EIO" });
+          continue;
+        }
         const resolved = posix.normalize(posix.join(posix.dirname(path), target));
         if (target.startsWith("/") || resolved === ".." || resolved.startsWith("../")) {
           skipped.push({ path, reason: "link" });
@@ -139,14 +149,26 @@ export function collect(root) {
           skipped.push({ path, reason: "size", size: st.size });
           continue;
         }
+        try {
+          accessSync(full, constants.R_OK);
+        } catch (error) {
+          unreadable.push({ path, code: error.code ?? "EIO" });
+          continue;
+        }
         entries.push({ path, type: "file", size: st.size, mode: st.mode & 0o111 ? 0o755 : 0o644, mtime: st.mtimeMs, full });
-        if (DETECT_FILES.has(name) && path.split("/").length <= 4 && st.size <= 64 * 1024) detect[path] = readFileSync(full, "utf8");
+        if (DETECT_FILES.has(name) && path.split("/").length <= 4 && st.size <= 64 * 1024) {
+          try {
+            detect[path] = readFileSync(full, "utf8");
+          } catch {
+            /* tunnistus ilman sisältöä; paketointi kertoo virheen */
+          }
+        }
       }
       // Muut (laitetiedostot, FIFOt, socketit) ohitetaan hiljaa.
     }
   };
   walk(root, "", []);
-  return { entries, skipped, detect };
+  return { entries, skipped, unreadable, detect };
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -198,7 +220,8 @@ function entryHeaders(e) {
   return out;
 }
 
-// Paketoi merkinnät tar.gz-puskuriksi. Heittää virheen { code: "too_big" }, jos pakattu ylittää rajan.
+// Paketoi merkinnät tar.gz-puskuriksi. Heittää virheen { code: "too_big" }, jos pakattu ylittää rajan, ja
+// { code: "unreadable", path, reason }, jos tiedostoa ei voi enää lukea (poistettu tai oikeudet muuttuneet läpikäynnin jälkeen).
 export async function packEntries(entries, { max = UPLOAD_MAX_BYTES } = {}) {
   const gzip = createGzip({ level: 6 });
   const chunks = [];
@@ -218,7 +241,13 @@ export async function packEntries(entries, { max = UPLOAD_MAX_BYTES } = {}) {
     if (tooBig) break;
     for (const h of entryHeaders(e)) await write(h);
     if (e.type === "file") {
-      const data = readFileSync(e.full);
+      let data;
+      try {
+        data = readFileSync(e.full);
+      } catch (error) {
+        gzip.destroy();
+        throw Object.assign(new Error("unreadable"), { code: "unreadable", path: e.path, reason: error.code ?? "EIO" });
+      }
       // Tiedosto muuttui läpikäynnin jälkeen: otsakkeen koko ratkaisee (katkaistaan tai täytetään).
       const body = data.length === e.size ? data : Buffer.concat([data.subarray(0, e.size), Buffer.alloc(Math.max(0, e.size - data.length))]);
       await write(body);

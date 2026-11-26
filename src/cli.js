@@ -18,9 +18,10 @@ export async function main({
   cwd = process.cwd(),
   fetch: fetchImpl = globalThis.fetch,
   sleep,
+  now,
 } = {}) {
   const args = parseArgs(argv);
-  const io = { env, stdout, stderr, stdin, home, cwd, fetch: fetchImpl, sleep };
+  const io = { env, stdout, stderr, stdin, home, cwd, fetch: fetchImpl, sleep, now };
 
   // Versio ei tarvitse kieltä, joten se ei koskaan kysy mitään (skriptit ajavat sitä).
   if (args.version) {

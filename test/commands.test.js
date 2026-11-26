@@ -1,6 +1,6 @@
 // Komennot valeportaalia vasten (ei verkkoa): login → init → push --prod, push ilman --prod, virheet ja paketointi.
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -17,7 +17,8 @@ function sink() {
 }
 
 // Valeportaali: vastaa CLI:n reitteihin ja kirjaa pyynnöt.
-function fakePortal({ fail } = {}) {
+// follow(reads): oma vastaus julkaisun tilan kyselyyn (Response tai heitetty virhe = verkko poikki).
+function fakePortal({ fail, follow } = {}) {
   const calls = [];
   let polls = 0;
   let reads = 0;
@@ -50,6 +51,7 @@ function fakePortal({ fail } = {}) {
     if (p === "/api/cli/projektit/1234/julkaisut") return json(201, { numero: 7, tavut: init.body.length, tiedostot: 2, sovellus: "NextJS", osoite: "https://kauppa.boggo.app" });
     if (p === "/api/cli/projektit/1234/julkaisut/7") {
       reads++;
+      if (follow) return follow(reads);
       const steps = ["haetaan", "rakennetaan", "siirretaan", "kaynnistetaan"].slice(0, reads).map((vaihe) => ({ vaihe, alkoi: "2026-11-25T12:00:00Z" }));
       const done = reads >= 4;
       if (fail && done)
@@ -61,7 +63,7 @@ function fakePortal({ fail } = {}) {
   return { fetch, calls };
 }
 
-async function run(argv, { home, cwd, portal, env = {} }) {
+async function run(argv, { home, cwd, portal, env = {}, clock }) {
   const stdout = sink();
   const stderr = sink();
   const stdin = new PassThrough();
@@ -76,7 +78,8 @@ async function run(argv, { home, cwd, portal, env = {} }) {
     home,
     cwd,
     fetch: portal.fetch,
-    sleep: async () => {},
+    sleep: clock?.sleep ?? (async () => {}),
+    now: clock?.now,
   });
   return { code, out: stdout.text, err: stderr.text };
 }
@@ -218,4 +221,124 @@ test("init --size pieni: koko Pieni (Donin päätös 26.11.2026)", async () => {
   const created = portal.calls.find((c) => c.path === "/api/cli/projektit" && c.method === "POST");
   assert.equal(JSON.parse(created.body).koko, "pieni");
   assert.equal((await run(["init", "--name", "x", "--size", "jattilainen", "--yes", "--force"], { home, cwd, portal })).code, 1);
+});
+
+// Simuloitu kello: sleep siirtää aikaa eteenpäin odottamatta.
+function fakeClock() {
+  const start = 1_800_000_000_000;
+  let t = start;
+  return { now: () => t, sleep: async (ms) => void (t += ms), minutes: () => (t - start) / 60_000 };
+}
+
+// Yhdistetty kansio ja BOGGO_TOKEN ilman login- ja init-vaiheita.
+function linkedProject() {
+  const cwd = project();
+  mkdirSync(join(cwd, ".boggo"));
+  writeFileSync(join(cwd, ".boggo", "projekti.json"), JSON.stringify({ organisaatio: "boggo", projekti: "kauppa", vmid: 1234, portaali: "https://portaali.test" }));
+  return cwd;
+}
+const CI = { BOGGO_TOKEN: TOKEN };
+const networkDown = () => {
+  throw new TypeError("fetch failed");
+};
+
+test("push: verkko katkeaa julkaisun alettua → seuranta päättyy 5 minuutissa paluukoodiin 1", async () => {
+  const portal = fakePortal({ follow: networkDown });
+  const clock = fakeClock();
+  const r = await run(["push", "--prod"], { home: mkdtempSync(join(tmpdir(), "boggo-koti-")), cwd: linkedProject(), portal, env: CI, clock });
+  assert.equal(r.code, 1);
+  assert.match(r.err, /ei saatu yhteyttä 5 minuuttiin/);
+  assert.match(r.err, /https:\/\/portaali.test\/kauppa\/julkaisut/);
+  assert.doesNotMatch(r.out, /Julkaistu/);
+  assert.ok(clock.minutes() > 5 && clock.minutes() < 6, `seuranta kesti ${clock.minutes()} min`);
+});
+
+test("push: lyhyt katko (alle 5 min) ei keskeytä seurantaa", async () => {
+  // 100 epäonnistunutta kyselyä × 2 s ≈ 3,3 min, sitten yhteys palaa ja julkaisu valmistuu.
+  const portal = fakePortal({
+    follow: (reads) => {
+      if (reads <= 100) networkDown();
+      return new Response(JSON.stringify({ deployment: { status: "valmis" }, steps: [], log: [] }), { status: 200 });
+    },
+  });
+  const r = await run(["push", "--prod"], { home: mkdtempSync(join(tmpdir(), "boggo-koti-")), cwd: linkedProject(), portal, env: CI, clock: fakeClock() });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Julkaistu/);
+});
+
+test("push: palvelinvirheet (5xx) lasketaan katkoksi samalla aikarajalla", async () => {
+  const portal = fakePortal({ follow: () => new Response("<html>502</html>", { status: 502 }) });
+  const clock = fakeClock();
+  const r = await run(["push"], { home: mkdtempSync(join(tmpdir(), "boggo-koti-")), cwd: linkedProject(), portal, env: CI, clock });
+  assert.equal(r.code, 1);
+  assert.match(r.err, /ei saatu yhteyttä 5 minuuttiin/);
+  assert.ok(clock.minutes() < 6);
+});
+
+test("push: yli 45 minuuttia kestävä julkaisu → seuranta loppuu paluukoodiin 1 (CI ei tulkitse onnistumiseksi)", async () => {
+  const portal = fakePortal({
+    follow: () => new Response(JSON.stringify({ deployment: { status: "rakennetaan" }, steps: [{ vaihe: "rakennetaan" }], log: [] }), { status: 200 }),
+  });
+  const clock = fakeClock();
+  const r = await run(["push", "--prod"], { home: mkdtempSync(join(tmpdir(), "boggo-koti-")), cwd: linkedProject(), portal, env: CI, clock });
+  assert.equal(r.code, 1);
+  assert.match(r.err, /Huom\.: Julkaisu kestää yli 45 minuuttia/);
+  assert.match(r.err, /https:\/\/portaali.test\/kauppa\/julkaisut/);
+  assert.equal(r.out, "");
+  assert.ok(clock.minutes() > 45 && clock.minutes() < 46, `seuranta kesti ${clock.minutes()} min`);
+});
+
+test("virheellinen BOGGO_TOKEN kerrotaan eikä se näy kirjautumattomuutena", async () => {
+  const portal = fakePortal();
+  const home = mkdtempSync(join(tmpdir(), "boggo-koti-"));
+  const cwd = project();
+  assert.equal((await run(["login"], { home, cwd, portal })).code, 0);
+  const calls = portal.calls.length;
+  const env = { BOGGO_TOKEN: "ei-kelpaa" };
+  for (const argv of [["whoami"], ["push", "--prod"], ["login"], ["logout"]]) {
+    const r = await run(argv, { home, cwd, portal, env });
+    assert.equal(r.code, 1, argv.join(" "));
+    assert.match(r.err, /BOGGO_TOKEN arvo ei ole kelvollinen/, argv.join(" "));
+    assert.doesNotMatch(r.err, /Kirjaudu ensin/, argv.join(" "));
+  }
+  assert.equal(portal.calls.length, calls, "virheellisellä tunnuksella ei otettu yhteyttä");
+  // Tallennettu kirjautuminen säilyi (logout ei poistanut sitä) ja toimii, kun muuttuja poistetaan.
+  assert.equal((await run(["whoami"], { home, cwd, portal })).code, 0);
+  // Englanniksi sama.
+  const en = await run(["whoami"], { home, cwd, portal, env: { ...env, BOGGO_LANG: "en" } });
+  assert.match(en.err, /BOGGO_TOKEN is not a valid token/);
+});
+
+const canDenyRead = process.platform !== "win32" && process.getuid?.() !== 0;
+
+test("push: lukukelvoton tiedosto tai kansio → selkeä virhe, ei pinoa eikä lähetystä; .boggoignore ohittaa", { skip: !canDenyRead && "root tai Windows: oikeuksia ei voi estää" }, async () => {
+  const portal = fakePortal();
+  const home = mkdtempSync(join(tmpdir(), "boggo-koti-"));
+  const cwd = linkedProject();
+  writeFileSync(join(cwd, "salainen.txt"), "x");
+  chmodSync(join(cwd, "salainen.txt"), 0);
+  mkdirSync(join(cwd, "data"));
+  writeFileSync(join(cwd, "data", "db"), "x");
+  chmodSync(join(cwd, "data"), 0);
+  try {
+    const r = await run(["push", "--prod"], { home, cwd, portal, env: CI });
+    assert.equal(r.code, 1);
+    assert.match(r.err, /Virhe: Näitä ei voi lukea, joten pakettia ei lähetetty: data \(EACCES\), salainen\.txt \(EACCES\)\./);
+    assert.match(r.err, /\.boggoignore/);
+    assert.ok(!portal.calls.some((c) => c.path.endsWith("/julkaisut")), "ei lähetystä");
+
+    writeFileSync(join(cwd, ".boggoignore"), "salainen.txt\ndata/\n");
+    const ok = await run(["push", "--prod"], { home, cwd, portal, env: CI });
+    assert.equal(ok.code, 0, ok.err);
+  } finally {
+    chmodSync(join(cwd, "data"), 0o755);
+  }
+});
+
+test("paketointi: tiedosto poistettu läpikäynnin jälkeen → virhe { code: unreadable }", async () => {
+  const dir = project();
+  const { entries, unreadable } = collect(dir);
+  assert.deepEqual(unreadable, []);
+  rmSync(join(dir, "app", "page.tsx"));
+  await assert.rejects(packEntries(entries), (e) => e.code === "unreadable" && e.path === "app/page.tsx" && e.reason === "ENOENT");
 });
