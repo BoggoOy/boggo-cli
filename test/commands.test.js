@@ -455,3 +455,51 @@ test("10: init, portaali ehdottaa muuta käyttöä → oletus Verkkosivu ja pelk
     assert.doesNotMatch(r.err, /Kirjoita numero/);
   }
 });
+
+test("login: portaali ilman komentoriviä (401 kirjautumistarkistukselta, 404, 405, HTML) → selkeä viesti, ei tunnusta", async () => {
+  const notCli = [
+    () => new Response(JSON.stringify({ error: "Kirjaudu sisään." }), { status: 401 }),
+    () => new Response(JSON.stringify({ error: "ei löydy" }), { status: 404 }),
+    () => new Response("", { status: 405 }),
+    () => new Response("<!doctype html><title>Boggo Cloud</title>", { status: 200, headers: { "content-type": "text/html" } }),
+  ];
+  for (const reply of notCli) {
+    const home = mkdtempSync(join(tmpdir(), "boggo-koti-"));
+    const portal = { fetch: async () => reply(), calls: [] };
+    const r = await run(["login"], { home, cwd: home, portal });
+    assert.equal(r.code, 1);
+    assert.match(r.err, /^Virhe: Boggo Cloud \(https:\/\/portaali\.test\) ei vielä tue kirjautumista komentoriviltä\./m);
+    assert.match(r.err, /Tarkista myös ympäristömuuttuja BOGGO_URL\./, "oma BOGGO_URL mainitaan");
+    assert.doesNotMatch(r.err, /Kirjaudu sisään|undefined/);
+    assert.throws(() => statSync(join(home, ".boggo", "tunnus.json")), "tunnusta ei tallennettu");
+  }
+  // Oletusportaali: ei vihjettä BOGGO_URL:sta. Englanniksi sama.
+  const home = mkdtempSync(join(tmpdir(), "boggo-koti-"));
+  const portal = { fetch: async () => notCli[0](), calls: [] };
+  const fi = await run(["login"], { home, cwd: home, portal, env: { BOGGO_URL: "" } });
+  assert.match(fi.err, /Boggo Cloud \(https:\/\/cloud\.boggo\.fi\) ei vielä tue/);
+  assert.doesNotMatch(fi.err, /BOGGO_URL/);
+  const en = await run(["login"], { home, cwd: home, portal, env: { BOGGO_URL: "", BOGGO_LANG: "en" } });
+  assert.match(en.err, /^Error: Boggo Cloud \(https:\/\/cloud\.boggo\.fi\) doesn't support logging in from the command line yet\./m);
+});
+
+test("login: portaalin omat virheet näytetään sellaisinaan (429 aloituksessa, 410 peruttu selaimessa)", async () => {
+  const json = (status, body) => new Response(JSON.stringify(body), { status });
+  const home = mkdtempSync(join(tmpdir(), "boggo-koti-"));
+  const limited = { fetch: async () => json(429, { error: "Liian monta kirjautumisyritystä. Odota hetki ja yritä uudelleen." }), calls: [] };
+  let r = await run(["login"], { home, cwd: home, portal: limited });
+  assert.equal(r.code, 1);
+  assert.match(r.err, /Virhe: Liian monta kirjautumisyritystä/);
+
+  const cancelled = {
+    calls: [],
+    fetch: async (url) =>
+      new URL(url).pathname === "/api/cli/laite"
+        ? json(201, { laitekoodi: "l".repeat(43), kayttajakoodi: "KHTR-4MXA", osoite: "https://portaali.test/cli?koodi=KHTR-4MXA", voimassa_s: 600, valit_s: 2 })
+        : json(410, { tila: "peruttu", error: "Kirjautuminen peruttiin selaimessa." }),
+  };
+  r = await run(["login"], { home, cwd: home, portal: cancelled });
+  assert.equal(r.code, 1);
+  assert.match(r.err, /Virhe: Kirjautuminen peruttiin selaimessa\./);
+  assert.doesNotMatch(r.err, /ei vielä tue/);
+});

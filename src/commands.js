@@ -2,9 +2,10 @@
 // Kulku uudelle projektille: boggo login → boggo init (uusi projekti tai olemassa oleva) → boggo push --prod.
 // Tekstit: src/command-texts.js (suomi ja englanti).
 import { spawn } from "node:child_process";
-import { ApiError, call, deleteLogin, deviceName, portalUrl, readLogin, saveLogin, uploadTimeoutMs } from "./api.js";
+import { ApiError, call, deleteLogin, deviceName, portalUrl, readLogin, saveLogin, TOKEN_RE, uploadTimeoutMs } from "./api.js";
 import { CMD } from "./command-texts.js";
 import { lineReader } from "./lang.js";
+import { SITE_URL } from "./messages.js";
 import { readLink, saveLink, suggestName } from "./link.js";
 import { collect, packEntries, sizeText, UPLOAD_MAX_BYTES } from "./pack.js";
 
@@ -129,11 +130,32 @@ function openBrowser(ctx, url) {
   }
 }
 
+// Kirjautumisen reitit eivät vaadi kirjautumista eivätkä koskaan vastaa 401, 404 tai 405 (portaalin src/app/api/cli/laite).
+// Sellainen vastaus tulee siis jostain muusta kuin CLI-rajapinnasta: portaalissa ei vielä ole komentoriviä (sen kirjautumis-
+// tarkistus vastaa "Kirjaudu sisään."), tai BOGGO_URL osoittaa väärään paikkaan. Portaalin omat virheet (429, 410, 503) näytetään.
+const NOT_CLI_STATUSES = [401, 404, 405];
+
+function cliNotSupported(ctx) {
+  const { t } = ctx;
+  return new UserError(`${t.cliNotSupported(ctx.portal)}${ctx.portal !== SITE_URL ? ` ${t.checkPortalUrl}` : ""}`);
+}
+
+async function loginApi(ctx, path, body) {
+  try {
+    return await ctx.api("POST", path, { body });
+  } catch (e) {
+    if (e instanceof ApiError && NOT_CLI_STATUSES.includes(e.status)) throw cliNotSupported(ctx);
+    throw e;
+  }
+}
+
 async function login(ctx) {
   const { t } = ctx;
   if (ctx.login?.env) throw new UserError(ctx.login.invalid ? t.tokenInvalid : t.tokenFromEnv);
   ctx.token = null;
-  const { data: start } = await ctx.api("POST", "/api/cli/laite", { body: { nimi: deviceName() } });
+  const { data: start } = await loginApi(ctx, "/api/cli/laite", { nimi: deviceName() });
+  // Vastaus ilman laitekoodia ei ole CLI-rajapinnan (esim. HTML-sivu tilakoodilla 200).
+  if (typeof start.laitekoodi !== "string" || typeof start.kayttajakoodi !== "string" || typeof start.osoite !== "string") throw cliNotSupported(ctx);
   ctx.err(t.loginOpen);
   ctx.err(`  ${start.osoite}`);
   ctx.err(t.loginCode(start.kayttajakoodi));
@@ -144,12 +166,13 @@ async function login(ctx) {
     await ctx.sleep((start.valit_s ?? 2) * 1000);
     let res;
     try {
-      res = await ctx.api("POST", "/api/cli/laite/tunnus", { body: { laitekoodi: start.laitekoodi } });
+      res = await loginApi(ctx, "/api/cli/laite/tunnus", { laitekoodi: start.laitekoodi });
     } catch (e) {
       if (e instanceof ApiError && e.status === 0) continue;
       throw e;
     }
     if (res.status === 202) continue;
+    if (!TOKEN_RE.test(res.data.tunnus ?? "")) throw cliNotSupported(ctx);
     saveLogin(ctx.io.home, { tunnus: res.data.tunnus, portaali: ctx.portal, sahkoposti: res.data.kayttaja?.sahkoposti ?? "" });
     ctx.out(t.loggedIn(res.data.kayttaja?.sahkoposti ?? ""));
     ctx.out(t.nextInit);
