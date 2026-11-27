@@ -264,12 +264,12 @@ test("rikkinäinen config.json ei kaada, ja se korjataan tallennuksessa", async 
   const r = await cli(["help"], { home, env: { LANG: "fi_FI.UTF-8" } });
   assert.equal(r.code, 0);
   assert.ok(r.out.includes(TEXT.fi.tagline));
-  const c = await cli(["config", "kieli", "en"], { home });
+  const c = await cli(["config", "language", "en"], { home });
   assert.equal(c.code, 0);
   assert.deepEqual(JSON.parse(readFileSync(join(home, ".boggo", "config.json"), "utf8")), { language: "en" });
 });
 
-for (const [setting, value, lang] of [["kieli", "en", "en"], ["language", "fi", "fi"], ["kieli", "suomi", "fi"], ["language", "English", "en"]]) {
+for (const [setting, value, lang] of [["language", "en", "en"], ["language", "fi", "fi"], ["language", "suomi", "fi"], ["language", "English", "en"]]) {
   test(`config ${setting} ${value} tallentaa kielen ${lang} ja säilyttää muut asetukset`, async () => {
     const home = mkdtempSync(join(tmpdir(), "boggo-test-"));
     mkdirSync(join(home, ".boggo"));
@@ -283,8 +283,8 @@ for (const [setting, value, lang] of [["kieli", "en", "en"], ["language", "fi", 
   });
 }
 
-test("config kieli ilman arvoa: päätteessä kysyy, putkessa virhe", async () => {
-  const asked = await cli(["config", "kieli"], { tty: true, input: "1\n", env: { BOGGO_LANG: "en" } });
+test("config language ilman arvoa: päätteessä kysyy, putkessa virhe", async () => {
+  const asked = await cli(["config", "language"], { tty: true, input: "1\n", env: { BOGGO_LANG: "en" } });
   assert.equal(asked.code, 0);
   assert.ok(asked.err.startsWith(LANGUAGE_PROMPT));
   assert.ok(asked.out.includes(TEXT.fi.languageSaved("suomi")));
@@ -296,12 +296,16 @@ test("config kieli ilman arvoa: päätteessä kysyy, putkessa virhe", async () =
 });
 
 test("config: väärä kieli ja tuntematon asetus", async () => {
-  const bad = await cli(["config", "kieli", "sv"], { env: FI });
+  const bad = await cli(["config", "language", "sv"], { env: FI });
   assert.equal(bad.code, 1);
   assert.equal(bad.err, "Tuntematon kieli: sv. Vaihtoehdot: fi, en.\n");
   const unknown = await cli(["config", "teema"], { env: EN });
   assert.equal(unknown.code, 1);
   assert.equal(unknown.err, "Unknown setting: teema. See boggo help config.\n");
+  // Komennot ovat aina englanniksi: suomenkielistä config kieli -muotoa ei ole.
+  const finnish = await cli(["config", "kieli", "en"], { env: FI });
+  assert.equal(finnish.code, 1);
+  assert.equal(finnish.err, "Tuntematon asetus: kieli. Katso boggo help config.\n");
   const show = await cli(["config"], { env: FI });
   assert.equal(show.code, 0);
   assert.ok(show.out.includes("Kieli: suomi (ympäristömuuttuja BOGGO_LANG)"));

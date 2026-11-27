@@ -203,8 +203,7 @@ function pad(text, width) {
 function fullHelp(lang, out) {
   const t = TEXT[lang];
   const rows = GROUPS.flatMap((g) => g.rows);
-  const label = (row) => (lang === "en" && row.cmdEn ? row.cmdEn : row.cmd);
-  const cmdWidth = Math.max(...rows.map((r) => label(r).length), ...t.globalOptions.map(([o]) => o.length)) + 3;
+  const cmdWidth = Math.max(...rows.map((r) => r.cmd.length), ...t.globalOptions.map(([o]) => o.length)) + 3;
   const sumWidth = Math.max(...rows.map((r) => r[lang].length)) + 2;
 
   const lines = ["", `  ${out.bold(`Boggo CLI ${VERSION}`)}`, "", `  ${t.tagline}`, ""];
@@ -213,7 +212,7 @@ function fullHelp(lang, out) {
     lines.push(`  ${out.bold(t.groups[group.id])}`);
     for (const row of group.rows) {
       const summary = row.coming ? `${pad(row[lang], sumWidth)}${out.dim(t.coming)}` : row[lang];
-      lines.push(`    ${out.cyan(label(row))}${" ".repeat(cmdWidth - label(row).length)}${summary}`.trimEnd());
+      lines.push(`    ${out.cyan(row.cmd)}${" ".repeat(cmdWidth - row.cmd.length)}${summary}`.trimEnd());
     }
     lines.push("");
   }

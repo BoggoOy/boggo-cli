@@ -12,7 +12,7 @@ export const TEXT = {
     tagline: "Boggo Cloudin komentorivityökalu: julkaise ja hallitse projekteja omalta koneeltasi.",
     shortNote: "Aloita: boggo login, sitten projektin kansiossa boggo init ja boggo push --prod.",
     usageTitle: "Käyttö",
-    usageLine: "boggo <komento> [valinnat]",
+    usageLine: "boggo <command> [options]",
     allCommands: "Kaikki komennot",
     commandHelp: "Yhden komennon ohje",
     optionsTitle: "Valinnat",
@@ -40,7 +40,7 @@ export const TEXT = {
     unknownSetting: (name) => `Tuntematon asetus: ${name}. Katso boggo help config.`,
     comingSoon: (command) => `boggo ${command} on vielä tulossa. Seuraa: ${SITE_URL}`,
     languageNames: { fi: "suomi", en: "englanti" },
-    languageSaved: (name) => `Kieli tallennettu: ${name}. Vaihda: boggo config kieli`,
+    languageSaved: (name) => `Kieli tallennettu: ${name}. Vaihda: boggo config language`,
     languageCurrent: (name, source) => `Kieli: ${name} (${source})`,
     languageSources: {
       flag: "valinta --lang",
@@ -48,7 +48,7 @@ export const TEXT = {
       config: "tallennettu",
       system: "järjestelmän kieli",
     },
-    languageNeedsValue: "Anna kieli: boggo config kieli fi tai boggo config kieli en.",
+    languageNeedsValue: "Anna kieli: boggo config language fi tai boggo config language en.",
     languageEnvOverrides: "Huom.: ympäristömuuttuja BOGGO_LANG ohittaa tallennetun kielen.",
     configSaveFailed: (reason) => `Asetusta ei voitu tallentaa (${reason}).`,
   },
@@ -136,8 +136,8 @@ export const GROUPS = [
   {
     id: "other",
     rows: [
-      { cmd: "help [komento]", cmdEn: "help [command]", topic: "help", coming: false, fi: "Näytä ohje", en: "Show help" },
-      { cmd: "config kieli", cmdEn: "config language", topic: "config", coming: false, fi: "Vaihda kieli (suomi tai englanti)", en: "Change the language (Finnish or English)" },
+      { cmd: "help [command]", topic: "help", coming: false, fi: "Näytä ohje", en: "Show help" },
+      { cmd: "config language", topic: "config", coming: false, fi: "Vaihda kieli (suomi tai englanti)", en: "Change the language (Finnish or English)" },
     ],
   },
 ];
@@ -198,10 +198,10 @@ export const COMMANDS = {
   projects: {
     coming: false,
     fi: {
-      usage: "boggo projects [valinnat]",
+      usage: "boggo projects [options]",
       description: ["Listaa organisaation projektit, niiden tilan ja osoitteen."],
       options: [
-        ["--org <tunniste>", "Organisaatio, jos kuulut useampaan"],
+        ["--org <slug>", "Organisaatio, jos kuulut useampaan"],
         ["--json", "Koneluettava tuloste"],
       ],
       examples: [["boggo projects", "Listaa projektit"]],
@@ -219,17 +219,17 @@ export const COMMANDS = {
   init: {
     coming: false,
     fi: {
-      usage: "boggo init [valinnat]",
+      usage: "boggo init [options]",
       description: [
         "Luo Boggo Cloudiin uuden projektin tästä kansiosta ja yhdistää kansion siihen. Komento tunnistaa",
         "sovelluksen (esim. Next.js tai Dockerfile) ja kysyy nimen, käytön ja koon. Voit myös valita",
         "olemassa olevan projektin. Sen jälkeen julkaise komennolla boggo push --prod.",
       ],
       options: [
-        ["--name <nimi>", "Projektin nimi (osoite <nimi>.boggo.app)"],
+        ["--name <name>", "Projektin nimi (osoite <name>.boggo.app)"],
         ["--use verkkosivu|rajapinta", "Mitä sovellus tekee"],
         ["--size pieni|perus|iso", "Koko (oletus perus)"],
-        ["--org <tunniste>", "Organisaatio, jos kuulut useampaan"],
+        ["--org <slug>", "Organisaatio, jos kuulut useampaan"],
         ["--yes", "Älä kysy mitään (oletukset)"],
       ],
       examples: [
@@ -260,14 +260,14 @@ export const COMMANDS = {
   link: {
     coming: false,
     fi: {
-      usage: "boggo link [valinnat]",
+      usage: "boggo link [options]",
       description: [
         "Yhdistää nykyisen kansion Boggo Cloudin projektiin. Valitset organisaation ja projektin",
         "listalta. Tieto tallennetaan kansioon .boggo, joka lisätään tiedostoon .gitignore.",
       ],
       options: [
-        ["--project <nimi>", "Projekti ilman valintaa listalta"],
-        ["--org <tunniste>", "Organisaatio, jos kuulut useampaan"],
+        ["--project <name>", "Projekti ilman valintaa listalta"],
+        ["--org <slug>", "Organisaatio, jos kuulut useampaan"],
       ],
       examples: [
         ["boggo link", "Valitse projekti listalta"],
@@ -293,7 +293,7 @@ export const COMMANDS = {
   push: {
     coming: false,
     fi: {
-      usage: "boggo push [valinnat]",
+      usage: "boggo push [options]",
       description: [
         "Paketoi nykyisen kansion ja rakentaa sen Boggo Cloudissa julkaisematta, joten näet ennen",
         "tuotantoa, onnistuuko rakennus. Valinnalla --prod julkaisu menee tuotantoon. Jos kansiota",
@@ -303,8 +303,8 @@ export const COMMANDS = {
       ],
       options: [
         ["--prod", "Julkaise tuotantoon rakennuksen jälkeen"],
-        ["--project <nimi>", "Projekti ilman yhdistettyä kansiota (boggo link)"],
-        ["--org <tunniste>", "Organisaatio, jos kuulut useampaan (CI:ssä pakollinen silloin)"],
+        ["--project <name>", "Projekti ilman yhdistettyä kansiota (boggo link)"],
+        ["--org <slug>", "Organisaatio, jos kuulut useampaan (CI:ssä pakollinen silloin)"],
       ],
       examples: [
         ["boggo push", "Rakenna ja tarkista"],
@@ -336,13 +336,13 @@ export const COMMANDS = {
   env: {
     coming: true,
     fi: {
-      usage: "boggo env <pull|ls> [valinnat]",
+      usage: "boggo env <pull|ls> [options]",
       description: [
         "env pull hakee projektin ympäristömuuttujat tiedostoon (oletus .env.local). Salaisten",
         "muuttujien arvot jäävät palvelimelle; ne tulevat tiedostoon vain nimenä kommenttina.",
         "env ls listaa muuttujien nimet ja tyypit.",
       ],
-      options: [["--project <nimi>", "Projekti ilman yhdistettyä kansiota (boggo link)"]],
+      options: [["--project <name>", "Projekti ilman yhdistettyä kansiota (boggo link)"]],
       examples: [
         ["boggo env pull", "Hae muuttujat tiedostoon .env.local"],
         ["boggo env pull .env", "Hae muuttujat tiedostoon .env"],
@@ -367,13 +367,13 @@ export const COMMANDS = {
   logs: {
     coming: true,
     fi: {
-      usage: "boggo logs [valinnat]",
+      usage: "boggo logs [options]",
       description: ["Näyttää sovelluksen tulosteen, kuten portaalin Lokit → Sovellus."],
       options: [
         ["--follow", "Seuraa uusia rivejä"],
         ["--requests", "Näytä pyyntöloki sovelluksen tulosteen sijaan"],
-        ["--since <aika>", "Aikaväli, esim. 1h tai 24h"],
-        ["--project <nimi>", "Projekti ilman yhdistettyä kansiota (boggo link)"],
+        ["--since <time>", "Aikaväli, esim. 1h tai 24h"],
+        ["--project <name>", "Projekti ilman yhdistettyä kansiota (boggo link)"],
       ],
       examples: [
         ["boggo logs", "Viimeisimmät rivit"],
@@ -398,7 +398,7 @@ export const COMMANDS = {
   promote: {
     coming: false,
     fi: {
-      usage: "boggo promote [numero] [valinnat]",
+      usage: "boggo promote [number] [options]",
       description: [
         "Julkaisee onnistuneen rakennuksen (boggo push) tuotantoon sellaisenaan, ilman uutta rakennusta.",
         "Ilman numeroa julkaistaan kansion viimeisin rakennus. Rakennus on tallessa 24 tuntia, ja vain",
@@ -406,8 +406,8 @@ export const COMMANDS = {
       ],
       options: [
         ["--force", "Julkaise, vaikka julkiset muuttujat (NEXT_PUBLIC_, VITE_) ovat muuttuneet rakennuksen jälkeen"],
-        ["--project <nimi>", "Projekti ilman yhdistettyä kansiota (anna myös numero)"],
-        ["--org <tunniste>", "Organisaatio, jos kuulut useampaan"],
+        ["--project <name>", "Projekti ilman yhdistettyä kansiota (anna myös numero)"],
+        ["--org <slug>", "Organisaatio, jos kuulut useampaan"],
       ],
       examples: [
         ["boggo push && boggo promote", "Rakenna, tarkista ja julkaise sama rakennus"],
@@ -435,7 +435,7 @@ export const COMMANDS = {
   open: {
     coming: false,
     fi: {
-      usage: "boggo open [valinnat]",
+      usage: "boggo open [options]",
       description: ["Avaa projektin julkisen osoitteen selaimessa."],
       options: [["--portal", "Avaa projektin sivu Boggo Cloudin portaalissa"]],
       examples: [
@@ -456,7 +456,7 @@ export const COMMANDS = {
   help: {
     coming: false,
     fi: {
-      usage: "boggo help [komento]",
+      usage: "boggo help [command]",
       description: ["Näyttää kaikki komennot tai yhden komennon tarkemman ohjeen."],
       options: [],
       examples: [
@@ -477,7 +477,7 @@ export const COMMANDS = {
   config: {
     coming: false,
     fi: {
-      usage: "boggo config kieli [fi|en]",
+      usage: "boggo config language [fi|en]",
       description: [
         "Vaihtaa kielen. Ilman arvoa komento kysyy kielen. Valinta tallennetaan tiedostoon",
         "~/.boggo/config.json. Yhdelle komennolle kielen voi valita valinnalla --lang, ja",
@@ -485,8 +485,8 @@ export const COMMANDS = {
       ],
       options: [],
       examples: [
-        ["boggo config kieli", "Kysy kieli"],
-        ["boggo config kieli en", "Vaihda englanniksi"],
+        ["boggo config language", "Kysy kieli"],
+        ["boggo config language en", "Vaihda englanniksi"],
         ["boggo help --lang en", "Ohje kerran englanniksi"],
       ],
     },
@@ -507,5 +507,5 @@ export const COMMANDS = {
   },
 };
 
-// Asetuksen kieli nimet: suomeksi kieli, englanniksi language (kumpikin toimii kummallakin kielellä).
-export const LANGUAGE_SETTING_NAMES = ["kieli", "language"];
+// Komennot ja niiden argumentit ovat aina englanniksi (Don 28.11.2026): boggo config language, ei config kieli.
+export const LANGUAGE_SETTING_NAMES = ["language"];

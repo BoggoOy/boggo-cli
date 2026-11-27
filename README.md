@@ -6,7 +6,7 @@ _Boggo Cloud command-line tool. English below._
 ```sh
 npx boggo login          # kirjaudu selaimella
 npx boggo init           # luo projekti tästä kansiosta (tai valitse olemassa oleva)
-npx boggo push --prod    # julkaise: https://<nimi>.boggo.app
+npx boggo push --prod    # julkaise: https://<name>.boggo.app
 ```
 
 `boggo push` ilman `--prod` rakentaa julkaisematta, ja `boggo promote` julkaisee sen rakennuksen tuotantoon rakentamatta uudelleen
@@ -25,15 +25,15 @@ Tai ilman asennusta: `npx boggo help`. Vaatii Node.js 18:n tai uudemman.
 
 | Komento | Mitä tekee | Tila |
 |---|---|---|
-| `boggo help [komento]` | Kaikki komennot tai yhden komennon ohje (myös `--help`, `-h`) | toimii |
+| `boggo help [command]` | Kaikki komennot tai yhden komennon ohje (myös `--help`, `-h`) | toimii |
 | `boggo --version` | Versio (myös `-v`) | toimii |
-| `boggo config kieli [fi\|en]` | Vaihda kieli | toimii |
+| `boggo config language [fi\|en]` | Vaihda kieli | toimii |
 | `boggo login`, `logout`, `whoami` | Kirjautuminen selaimella, uloskirjautuminen, kirjautunut käyttäjä | toimii |
 | `boggo init` | Luo projekti tästä kansiosta (tunnistaa sovelluksen, kysyy nimen, käytön ja koon) | toimii |
 | `boggo projects`, `link`, `open` | Projektit, kansion yhdistäminen projektiin, projektin avaus selaimessa | toimii |
 | `boggo push` | Rakenna ja tarkista julkaisematta | toimii |
 | `boggo push --prod` | Rakenna ja julkaise tuotantoon | toimii |
-| `boggo promote [numero]` | Julkaise rakennus tuotantoon rakentamatta uudelleen | toimii, kun Boggo Cloud ottaa sen käyttöön |
+| `boggo promote [number]` | Julkaise rakennus tuotantoon rakentamatta uudelleen | toimii, kun Boggo Cloud ottaa sen käyttöön |
 | `boggo env pull`, `env ls` | Ympäristömuuttujat tiedostoon `.env.local`, muuttujien lista | tulossa |
 | `boggo logs` | Sovelluksen lokit | tulossa |
 
@@ -54,7 +54,7 @@ ja paluukoodi 1.
 ## Kieli
 
 Suomi ja englanti. Ensimmäisellä käyttökerralla päätteessä työkalu kysyy kielen ja tallentaa sen tiedostoon
-`~/.boggo/config.json` (oikeudet 600). Vaihto: `boggo config kieli` (tai `boggo config language`), yhdelle komennolle `--lang fi|en`.
+`~/.boggo/config.json` (oikeudet 600). Vaihto: `boggo config language`, yhdelle komennolle `--lang fi|en`. Komennot ja valinnat ovat aina englanniksi, vain tekstit ovat suomeksi.
 
 Kieli valitaan tässä järjestyksessä:
 
