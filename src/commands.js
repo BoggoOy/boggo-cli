@@ -16,16 +16,24 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export function context(io, lang, args, version) {
   const t = CMD[lang];
   const login = readLogin(io.home, io.env);
-  const interactive = Boolean(io.stdin.isTTY && io.stderr.isTTY) && !(io.env.CI && io.env.CI !== "false" && io.env.CI !== "0");
+  const ci = Boolean(io.env.CI && io.env.CI !== "false" && io.env.CI !== "0");
+  const interactive = Boolean(io.stdin.isTTY && io.stderr.isTTY) && !ci;
+  // Elävä rivi (pyörivä merkki, aika, edistymispalkki) vain päätteeseen: CI:n lokiin, putkeen ja tiedostoon tavalliset rivit.
+  const animate = Boolean(io.stderr.isTTY) && io.env.TERM !== "dumb" && !ci;
   let lines = null;
   // Värit erikseen kummallekin virralle (putki tai tiedosto saa pelkän tekstin). blank: viimeisin rivi oli tyhjä, jotta gap()
   // ei koskaan tulosta kahta tyhjää riviä peräkkäin.
   const c = painter(io.stderr, io.env);
   const o = painter(io.stdout, io.env);
   let blank = false;
+  let live = null;
+  const CLEAR = "\r\u001b[2K";
+  // Tavallinen rivi elävän rivin aikana: elävä rivi pyyhitään, rivi kirjoitetaan ja elävä piirretään sen alle uudelleen.
   const write = (stream, paint, s) => {
+    if (live) io.stderr.write(CLEAR);
     stream.write(`${highlight(paint, safe(s))}\n`);
     blank = s === "";
+    live?.draw();
   };
   const ctx = {
     t,
@@ -50,8 +58,32 @@ export function context(io, lang, args, version) {
     // Tyhjä rivi osien väliin (stderr, joten stdoutin skriptikäyttö ei muutu).
     gap() {
       if (blank) return;
+      if (live) io.stderr.write(CLEAR);
       io.stderr.write("\n");
       blank = true;
+      live?.draw();
+    },
+    // Elävä rivi: render() palauttaa tekstin, joka piirretään pyörivän merkin perään 10 kertaa sekunnissa. null = ei päätettä
+    // (kutsuja tulostaa tavalliset rivit). Rivi pyyhitään stopLive()lla; runCommand pysäyttää sen aina myös virheessä.
+    startLive(render, { indent = "" } = {}) {
+      if (!animate) return null;
+      ctx.stopLive();
+      const frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
+      let i = 0;
+      const handle = {
+        draw: () => io.stderr.write(`${CLEAR}${indent}${highlight(c, safe(`${c.cyan(frames[i++ % frames.length])} ${render()}`))}`),
+      };
+      handle.timer = setInterval(handle.draw, 100);
+      handle.timer.unref?.();
+      live = handle;
+      handle.draw();
+      return handle;
+    },
+    stopLive() {
+      if (!live) return;
+      clearInterval(live.timer);
+      live = null;
+      io.stderr.write(CLEAR);
     },
     async ask(question, fallback = "") {
       lines ??= lineReader(io.stdin);
@@ -112,6 +144,7 @@ export async function runCommand(ctx, command) {
         throw new UserError(ctx.t.unknown(command));
     }
   } catch (e) {
+    ctx.stopLive();
     if (e instanceof UserError || e instanceof ApiError) {
       ctx.gap();
       ctx.err(`${ctx.c.red(ctx.c.bold(ctx.t.errorMark))} ${e.message}`);
@@ -119,6 +152,7 @@ export async function runCommand(ctx, command) {
     }
     throw e;
   } finally {
+    ctx.stopLive();
     ctx.gap();
     ctx.close();
   }
@@ -432,6 +466,18 @@ async function target(ctx, { noInit = false } = {}) {
 }
 
 const STAGES = ["jonossa", "haetaan", "rakennetaan", "siirretaan", "kaynnistetaan"];
+
+// Kesto lyhyesti: 42 s, 3 min 05 s.
+function duration(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")} s`;
+}
+
+// Edistymispalkki: täytetty osa syaanilla, loput himmeänä.
+function progressBar(c, ratio, width = 24) {
+  const full = Math.round(Math.min(1, Math.max(0, ratio)) * width);
+  return `${c.cyan("━".repeat(full))}${c.dim("─".repeat(width - full))}`;
+}
 const FOLLOW_MAX_MS = 45 * 60_000;
 const CONNECTION_LOST_MS = 5 * 60_000;
 
@@ -456,6 +502,16 @@ async function push(ctx) {
     throw e;
   }
   ctx.err(t.uploading(files.length, sizeText(pkg.length, ctx.lang), ctx.c.bold(dest.projekti)));
+  // Päätteessä palkki: lähetetty osuus ja määrä; kun kaikki on lähetetty, Boggo Cloud vielä tarkistaa paketin ennen vastausta.
+  let sent = 0;
+  const total = pkg.length;
+  const progress = ctx.startLive(
+    () =>
+      sent < total
+        ? `${progressBar(ctx.c, sent / total)} ${Math.floor((sent / total) * 100)} % · ${sizeText(sent, ctx.lang)} / ${sizeText(total, ctx.lang)}`
+        : `${progressBar(ctx.c, 1)} 100 % · ${ctx.c.dim(t.uploadChecking)}`,
+    { indent: "  " },
+  );
 
   // Uusi projekti voi olla vielä luonnissa: odotetaan enintään 5 min.
   let started;
@@ -469,6 +525,7 @@ async function push(ctx) {
           body: pkg,
           query: { tuotanto: prod ? 1 : undefined },
           timeoutMs: uploadTimeoutMs(pkg.length),
+          onProgress: progress ? (n) => (sent = n) : undefined,
         })
       ).data;
       break;
@@ -484,6 +541,7 @@ async function push(ctx) {
       throw e;
     }
   }
+  ctx.stopLive();
   const label = prod ? t.deployment(started.numero) : t.build(started.numero);
   ctx.err(t.queued(ctx.c.bold(label), started.sovellus));
   ctx.gap();
@@ -503,9 +561,23 @@ async function follow(ctx, dest, numero, prod, address) {
   const followUrl = deploymentsUrl;
   let lastOk = began;
   let d;
+  // Päätteessä käynnissä oleva vaihe elävänä rivinä (kesto kasvaa) ja valmis vaihe ✓-rivinä kestoineen; muualla vaihe kerran.
+  let current = null;
+  const stageName = (vaihe) => t.stages[vaihe] ?? vaihe;
+  const live = ctx.startLive(() => `${stageName(current?.vaihe ?? "jonossa")}… ${ctx.c.dim(duration(ctx.now() - (current?.seen ?? began)))}`, { indent: "  " });
+  // Päättynyt vaihe ✓- tai ✗-rivinä. Kutsuja vaihtaa elävän rivin vaiheen ensin, jotta rivin alle ei piirry vanha vaihe.
+  const finishStage = (stage, ok) => {
+    if (!stage) return;
+    // Kesto portaalin aikaleimoista, jos vaihe on niissä päättynyt; muuten siitä, kun vaihe nähtiin.
+    const step = (d?.steps ?? []).find((s) => s.vaihe === stage.vaihe);
+    const server = step?.paattyi ? Date.parse(step.paattyi) - Date.parse(step.alkoi) : NaN;
+    const ms = Number.isFinite(server) && server >= 0 ? server : ctx.now() - stage.seen;
+    ctx.err(`  ${ok ? ctx.c.green("✓") : ctx.c.red("✗")} ${stageName(stage.vaihe)} ${ctx.c.dim(duration(ms))}`);
+  };
   for (;;) {
     await ctx.sleep(2000);
     if (ctx.now() - began > FOLLOW_MAX_MS) {
+      ctx.stopLive();
       ctx.gap();
       warn(ctx, t.stillRunning(followUrl));
       return 1;
@@ -516,6 +588,7 @@ async function follow(ctx, dest, numero, prod, address) {
     } catch (e) {
       if (!(e instanceof ApiError && (e.status === 0 || e.status >= 500))) throw e;
       if (ctx.now() - lastOk > CONNECTION_LOST_MS) {
+        ctx.stopLive();
         ctx.gap();
         warn(ctx, t.lostTrack(followUrl));
         return 1;
@@ -525,11 +598,19 @@ async function follow(ctx, dest, numero, prod, address) {
     for (const s of d.steps ?? []) {
       if (shown.has(s.vaihe) || !STAGES.includes(s.vaihe)) continue;
       shown.add(s.vaihe);
-      ctx.err(`  ${ctx.c.cyan("›")} ${t.stages[s.vaihe] ?? s.vaihe}…`);
+      if (!live) {
+        ctx.err(`  ${ctx.c.cyan("›")} ${stageName(s.vaihe)}…`);
+        continue;
+      }
+      const previous = current;
+      current = { vaihe: s.vaihe, seen: ctx.now() };
+      finishStage(previous, true);
     }
     const status = d.deployment.status;
     if (status === "valmis" || status === "epaonnistui" || status === "korvattu") break;
   }
+  ctx.stopLive();
+  if (live) finishStage(current, d.deployment.status === "valmis");
   const secs = Math.round((ctx.now() - began) / 1000);
   ctx.gap();
   if (d.deployment.status === "valmis") {
