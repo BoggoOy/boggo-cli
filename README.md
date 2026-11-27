@@ -64,7 +64,8 @@ Kieli valitaan tässä järjestyksessä:
 4. kysymys, kun tuloste ja syöte ovat pääte (ei koskaan putkessa, CI:ssä tai kun `BOGGO_LANG` on asetettu)
 5. järjestelmän kieli (`LC_ALL`, `LC_MESSAGES`, `LANG`): suomi, jos se on suomi, muuten englanti
 
-Värit vain päätteessä; `NO_COLOR` poistaa ne.
+Värit vain päätteessä; `NO_COLOR` poistaa ne. Päätteessä `boggo push` näyttää lähetyksen edistymisen ja käynnissä olevan
+vaiheen elävänä rivinä; CI:ssä ja putkessa tulostuu tavalliset rivit.
 
 ## English
 
@@ -75,7 +76,8 @@ exits with 0 only when the build or deployment succeeded.
 
 On first use in a terminal, the tool asks for your language and saves it in `~/.boggo/config.json`. Change it with
 `boggo config language`, or use `--lang fi|en` for one command. In pipes and CI it never asks: it uses `BOGGO_LANG`, then the
-system language (`LANG`), then English. Colors only in a terminal; `NO_COLOR` turns them off.
+system language (`LANG`), then English. Colors only in a terminal; `NO_COLOR` turns them off. In a terminal `boggo push` shows upload progress and the running step
+on a live line; CI and pipes get plain lines.
 
 ## Kehitys
 

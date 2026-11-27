@@ -563,7 +563,8 @@ test("ilme: päätteessä värit ja korostukset, NO_COLOR poistaa ne, --json pys
   assert.ok(fail.err.includes(`${ESC}36mhttps://portaali.test/kauppa/julkaisut${ESC}39m`), "osoite korostettu ilman pistettä");
 
   const plain = await runColors(["push"], { cwd, portal: fakePortal(), env: { NO_COLOR: "1" } });
-  assert.ok(!plain.out.includes(ESC) && !plain.err.includes(ESC));
+  // NO_COLOR koskee värejä: elävä rivi saa yhä pyyhkiä rivinsä (ESC[2K), mutta värikoodeja (ESC[…m) ei tule.
+  assert.ok(!/\u001b\[[0-9;]*m/.test(plain.out + plain.err), JSON.stringify(plain.err));
 
   const json = await runColors(["whoami", "--json"], { cwd, portal: fakePortal() });
   assert.equal(JSON.parse(json.out).organisaatio, "boggo");
@@ -673,4 +674,25 @@ test("tietoturva: toisen portaalin kansioyhteys ei julkaise tämän portaalin pr
   assert.equal(r.code, 1);
   assert.match(r.err, /toisessa Boggo Cloudissa \(https:\/\/testi\.boggo\.fi\)/);
   assert.ok(!portal.calls.some((c) => c.path.includes("/julkaisut")), "ei lähetystä");
+});
+
+// Elävä rivi (Donin pyyntö 27.11.2026): päätteessä lähetyksen palkki ja vaiheet pyörivällä merkillä, valmis vaihe ✓-rivinä.
+// screen(): mitä päätteeseen jää näkyviin, kun pyyhityt rivit (\r ESC[2K) poistetaan.
+const screen = (text) => text.split("\n").map((line) => line.split("\r\u001b[2K").pop()).join("\n");
+
+test("ilme: päätteessä elävä rivi, valmiit vaiheet ✓-riveinä kestoineen; CI:ssä ja putkessa tavalliset rivit", async () => {
+  const cwd = linkedProject();
+  const r = await runColors(["push", "--prod"], { cwd, portal: fakePortal(), env: { NO_COLOR: "1" } });
+  assert.equal(r.code, 0, r.err);
+  assert.ok(r.err.includes("\r\u001b[2K"), "elävä rivi piirretään");
+  const shown = screen(r.err);
+  assert.match(shown, / {2}✓ Puretaan paketti \d+ s\n {2}✓ Rakennetaan \d+ s\n {2}✓ Siirretään palvelimelle \d+ s\n {2}✓ Käynnistetään ja tarkistetaan \d+ s\n/);
+  assert.doesNotMatch(shown, /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]|━|›/, "elävä rivi ei jää näkyviin");
+
+  const failed = await runColors(["push", "--prod"], { cwd, portal: fakePortal({ fail: true }), env: { NO_COLOR: "1" } });
+  assert.match(screen(failed.err), / {2}✗ Käynnistetään ja tarkistetaan \d+ s\n\nVirhe: Rakennus epäonnistui/);
+
+  const ci = await runColors(["push", "--prod"], { cwd, portal: fakePortal(), env: { CI: "true", NO_COLOR: "1" } });
+  assert.ok(!ci.err.includes("\r"), "CI: ei elävää riviä");
+  assert.match(ci.err, / {2}› Puretaan paketti…/);
 });

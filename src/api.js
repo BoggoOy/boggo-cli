@@ -63,11 +63,32 @@ export class ApiError extends Error {
   }
 }
 
-// Kutsu portaaliin. body: olio (JSON) tai Buffer (paketti). Virhe: ApiError portaalin selkokielisellä viestillä.
+// Paketti virtana paloittain, jotta lähetetty määrä tiedetään (onProgress). Content-Length annetaan itse, joten pyyntö on
+// tavuilleen sama kuin puskurina lähetetty (ei chunked-siirtoa).
+const UPLOAD_CHUNK = 256 * 1024;
+
+function progressBody(buf, onProgress) {
+  let sent = 0;
+  return new ReadableStream(
+    {
+      pull(controller) {
+        if (sent >= buf.length) return controller.close();
+        const part = buf.subarray(sent, sent + UPLOAD_CHUNK);
+        sent += part.length;
+        controller.enqueue(part);
+        onProgress(sent);
+      },
+    },
+    { highWaterMark: 0 },
+  );
+}
+
+// Kutsu portaaliin. body: olio (JSON) tai Buffer (paketti; onProgress(lähetetyt tavut) kertoo etenemisen). Virhe: ApiError
+// portaalin selkokielisellä viestillä.
 // Tunnus kulkee vain salattuna: http:// kelpaa ainoastaan omalla koneella (portaalin kehitys).
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
-export async function call(ctx, method, path, { body, org, query, timeoutMs = 60_000, fetchImpl = fetch } = {}) {
+export async function call(ctx, method, path, { body, org, query, timeoutMs = 60_000, fetchImpl = fetch, onProgress } = {}) {
   let url;
   try {
     url = new URL(`${ctx.portal}${path}`);
@@ -80,16 +101,22 @@ export async function call(ctx, method, path, { body, org, query, timeoutMs = 60
   if (ctx.token) headers.Authorization = `Bearer ${ctx.token}`;
   if (org) headers["X-Boggo-Organisaatio"] = org;
   let payload;
+  let duplex;
   if (Buffer.isBuffer(body)) {
     headers["Content-Type"] = "application/gzip";
     payload = body;
+    if (onProgress) {
+      headers["Content-Length"] = String(body.length);
+      payload = progressBody(body, onProgress);
+      duplex = "half";
+    }
   } else if (body !== undefined) {
     headers["Content-Type"] = "application/json";
     payload = JSON.stringify(body);
   }
   let res;
   try {
-    res = await fetchImpl(url, { method, headers, body: payload, signal: AbortSignal.timeout(timeoutMs), redirect: "error" });
+    res = await fetchImpl(url, { method, headers, body: payload, duplex, signal: AbortSignal.timeout(timeoutMs), redirect: "error" });
   } catch (error) {
     // Aikaraja on eri asia kuin katkos: pyyntö voi olla jo perillä (esim. julkaisu alkanut), joten kutsuja kertoo sen erikseen.
     if (error?.name === "TimeoutError") throw new ApiError(0, ctx.t.timedOut(ctx.portal), { timeout: true });
