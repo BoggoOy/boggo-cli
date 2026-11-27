@@ -2,7 +2,7 @@
 // Kulku uudelle projektille: boggo login → boggo init (uusi projekti tai olemassa oleva) → boggo push --prod.
 // Tekstit: src/command-texts.js (suomi ja englanti).
 import { spawn } from "node:child_process";
-import { ApiError, call, deleteLogin, deviceName, portalUrl, readLogin, saveLogin } from "./api.js";
+import { ApiError, call, deleteLogin, deviceName, portalUrl, readLogin, saveLogin, uploadTimeoutMs } from "./api.js";
 import { CMD } from "./command-texts.js";
 import { lineReader } from "./lang.js";
 import { readLink, saveLink, suggestName } from "./link.js";
@@ -108,10 +108,17 @@ function requireLogin(ctx) {
 // ---------------------------------------------------------------------------------------------------------
 // login, logout, whoami
 
+// Selaimen avauskomento. Windowsissa ei cmd /c start: cmd tulkitsee osoitteen &-merkin komentojen erottimeksi, joten osoite
+// katkeaisi ja loppu ajettaisiin komentona. rundll32 saa osoitteen yhtenä argumenttina.
+export function browserCommand(platform, url) {
+  if (platform === "darwin") return ["open", [url]];
+  if (platform === "win32") return ["rundll32", ["url.dll,FileProtocolHandler", url]];
+  return ["xdg-open", [url]];
+}
+
 function openBrowser(ctx, url) {
   if (ctx.io.env.BOGGO_NO_BROWSER || !ctx.interactive) return false;
-  const [cmd, args] =
-    process.platform === "darwin" ? ["open", [url]] : process.platform === "win32" ? ["cmd", ["/c", "start", "", url]] : ["xdg-open", [url]];
+  const [cmd, args] = browserCommand(process.platform, url);
   try {
     const child = spawn(cmd, args, { stdio: "ignore", detached: true });
     child.on("error", () => {});
@@ -194,7 +201,9 @@ async function pickOrg(ctx) {
   const linked = readLink(ctx.cwd);
   if (linked?.organisaatio) return linked.organisaatio;
   const m = await me(ctx);
-  if (m.organisaatiot.length <= 1 || !ctx.interactive) return m.organisaatio;
+  if (m.organisaatiot.length <= 1) return m.organisaatio;
+  // Ilman päätettä (CI) ei valita hiljaa oletusorganisaatiota: projekti voisi syntyä tai julkaisu mennä väärään organisaatioon.
+  if (!ctx.interactive) throw new UserError(ctx.t.needOrg(m.organisaatiot.map((o) => o.tunnus)));
   const i = await ctx.choose(
     ctx.t.pickOrg,
     m.organisaatiot.map((o) => `${o.nimi} (${o.tunnus})`),
@@ -275,7 +284,8 @@ async function init(ctx) {
   }
 
   const uses = ["verkkosivu", "rajapinta"];
-  let use = ctx.args.use ? normalizeUse(ctx.args.use) : app.kaytto ?? "verkkosivu";
+  // Portaalin ehdotus voi olla jokin muu (esim. "muu" tai puuttuva); silloin oletus on Verkkosivu, jotta pelkkä Enter kelpaa.
+  let use = ctx.args.use ? normalizeUse(ctx.args.use) : uses.includes(app.kaytto) ? app.kaytto : "verkkosivu";
   if (!use) throw new UserError(t.badUse);
   if (!ctx.args.use && ctx.interactive && !ctx.args.yes) use = uses[await ctx.choose(t.askUse, [t.useSite, t.useApi], uses.indexOf(use))];
 
@@ -339,7 +349,8 @@ async function target(ctx) {
   if (linked) return { org: linked.organisaatio, projekti: linked.projekti, vmid: linked.vmid };
   if (!ctx.interactive) throw new UserError(ctx.t.notLinked);
   ctx.err(ctx.t.notLinkedInit);
-  if ((await init(ctx)) !== 0) throw new UserError(ctx.t.cancelled);
+  // init kertoo itse perumisen ("Peruttu."), joten tässä ei toista viestiä: null = push päättyy paluukoodiin 1.
+  if ((await init(ctx)) !== 0) return null;
   const now = readLink(ctx.cwd);
   return { org: now.organisaatio, projekti: now.projekti, vmid: now.vmid };
 }
@@ -353,6 +364,7 @@ async function push(ctx) {
   requireLogin(ctx);
   const prod = Boolean(ctx.args.prod);
   const dest = await target(ctx);
+  if (!dest) return 1;
 
   const { entries, skipped, unreadable } = collect(ctx.cwd);
   if (unreadable.length) throw new UserError(t.unreadable(unreadable.slice(0, 5).map((u) => `${u.path} (${u.code})`), unreadable.length));
@@ -372,12 +384,23 @@ async function push(ctx) {
   // Uusi projekti voi olla vielä luonnissa: odotetaan enintään 5 min.
   let started;
   const until = ctx.now() + 5 * 60_000;
+  const deploymentsUrl = `${ctx.portal}/${dest.projekti}/julkaisut`;
   for (;;) {
     try {
-      started = (await ctx.api("POST", `/api/cli/projektit/${dest.vmid}/julkaisut`, { org: dest.org, body: pkg, query: { tuotanto: prod ? 1 : undefined }, timeoutMs: 300_000 })).data;
+      started = (
+        await ctx.api("POST", `/api/cli/projektit/${dest.vmid}/julkaisut`, {
+          org: dest.org,
+          body: pkg,
+          query: { tuotanto: prod ? 1 : undefined },
+          timeoutMs: uploadTimeoutMs(pkg.length),
+        })
+      ).data;
       break;
     } catch (e) {
-      if (e instanceof ApiError && e.status === 409 && /valmis|ready/i.test(e.message) && ctx.now() < until) {
+      // Aikaraja: paketti voi olla jo perillä ja julkaisu alkanut, joten ei lähetetä uudelleen vaan ohjataan tarkistamaan.
+      if (e instanceof ApiError && e.status === 0 && e.data?.timeout) throw new UserError(t.uploadTimedOut(deploymentsUrl));
+      // Projekti luonnissa: portaalin koodi syy = luonti_kesken (vanhempi portaali: tunnistus tekstistä).
+      if (e instanceof ApiError && e.status === 409 && (e.data?.syy === "luonti_kesken" || (!e.data?.syy && /valmis|ready/i.test(e.message))) && ctx.now() < until) {
         ctx.err(t.waitingCreate);
         await ctx.sleep(10_000);
         continue;
@@ -393,7 +416,7 @@ async function push(ctx) {
   // tiedossa (CI ei saa tulkita sitä onnistumiseksi).
   const shown = new Set();
   const began = ctx.now();
-  const followUrl = `${ctx.portal}/${dest.projekti}/julkaisut`;
+  const followUrl = deploymentsUrl;
   let lastOk = began;
   let d;
   for (;;) {

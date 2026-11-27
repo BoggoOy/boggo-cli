@@ -45,6 +45,14 @@ export function deleteLogin(home) {
   rmSync(tokenPath(home), { force: true });
 }
 
+/**
+ * Paketin lähetyksen aikaraja koosta: 2 min + koko 64 kt/s:n nopeudella, vähintään 5 min ja enintään 40 min. Kiinteä 5 min katkaisi
+ * hitaalla yhteydellä isonkin, mutta sallitun (100 Mt) paketin kesken lähetyksen.
+ */
+export function uploadTimeoutMs(bytes) {
+  return Math.min(40 * 60_000, Math.max(5 * 60_000, Math.round(120_000 + (bytes / (64 * 1024)) * 1000)));
+}
+
 export const deviceName = () => hostname().slice(0, 100) || "Komentorivi";
 
 export class ApiError extends Error {
@@ -73,7 +81,9 @@ export async function call(ctx, method, path, { body, org, query, timeoutMs = 60
   let res;
   try {
     res = await fetchImpl(url, { method, headers, body: payload, signal: AbortSignal.timeout(timeoutMs), redirect: "error" });
-  } catch {
+  } catch (error) {
+    // Aikaraja on eri asia kuin katkos: pyyntö voi olla jo perillä (esim. julkaisu alkanut), joten kutsuja kertoo sen erikseen.
+    if (error?.name === "TimeoutError") throw new ApiError(0, ctx.t.timedOut(ctx.portal), { timeout: true });
     throw new ApiError(0, ctx.t.noConnection(ctx.portal));
   }
   const data = await res.json().catch(() => ({}));

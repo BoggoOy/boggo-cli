@@ -305,10 +305,12 @@ export const COMMANDS = {
       options: [
         ["--prod", "Julkaise tuotantoon rakennuksen jälkeen"],
         ["--project <nimi>", "Projekti ilman yhdistettyä kansiota (boggo link)"],
+        ["--org <tunniste>", "Organisaatio, jos kuulut useampaan (CI:ssä pakollinen silloin)"],
       ],
       examples: [
         ["boggo push", "Rakenna ja tarkista"],
         ["boggo push --prod", "Rakenna ja julkaise tuotantoon"],
+        ["BOGGO_TOKEN=… boggo push --prod --project kauppa --org yritys", "CI: julkaise ilman yhdistettyä kansiota"],
       ],
     },
     en: {
@@ -323,10 +325,12 @@ export const COMMANDS = {
       options: [
         ["--prod", "Deploy to production after the build"],
         ["--project <name>", "Project, without a linked folder (boggo link)"],
+        ["--org <slug>", "Organization, if you belong to several (required in CI then)"],
       ],
       examples: [
         ["boggo push", "Build and check"],
         ["boggo push --prod", "Build and deploy to production"],
+        ["BOGGO_TOKEN=… boggo push --prod --project shop --org company", "CI: deploy without a linked folder"],
       ],
     },
   },

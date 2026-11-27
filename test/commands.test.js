@@ -7,6 +7,8 @@ import { PassThrough } from "node:stream";
 import { test } from "node:test";
 import { gunzipSync } from "node:zlib";
 import { main } from "../src/cli.js";
+import { uploadTimeoutMs } from "../src/api.js";
+import { browserCommand } from "../src/commands.js";
 import { collect, ignored, packEntries, parseIgnore } from "../src/pack.js";
 
 const TOKEN = `boggo_${"t".repeat(43)}`;
@@ -18,11 +20,14 @@ function sink() {
 
 // Valeportaali: vastaa CLI:n reitteihin ja kirjaa pyynnöt.
 // follow(reads): oma vastaus julkaisun tilan kyselyyn (Response tai heitetty virhe = verkko poikki).
-function fakePortal({ fail, follow } = {}) {
+// kaytto: tunnistuksen ehdottama käyttö (oletus verkkosivu), orgs: organisaatiot, upload(n): oma vastaus paketin lähetykseen
+// (Response, heitetty virhe tai undefined = tavallinen), projects: valmiit projektit.
+function fakePortal({ fail, follow, kaytto = "verkkosivu", orgs, upload, projects: initial = [] } = {}) {
   const calls = [];
   let polls = 0;
   let reads = 0;
-  const projects = [];
+  let uploads = 0;
+  const projects = [...initial];
   const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   const fetch = async (url, init = {}) => {
     const u = new URL(url);
@@ -34,11 +39,11 @@ function fakePortal({ fail, follow } = {}) {
     if (p === "/api/cli/laite/tunnus") return ++polls < 2 ? json(202, { tila: "odottaa" }) : json(200, { tunnus: TOKEN, kayttaja: { sahkoposti: "don@example.com" } });
     if (auth !== `Bearer ${TOKEN}`) return json(401, { error: "Kirjaudu ensin: boggo login", login: true });
     if (p === "/api/cli/mina")
-      return json(200, { kayttaja: { sahkoposti: "don@example.com", nimi: "Don" }, organisaatio: "boggo", organisaatiot: [{ tunnus: "boggo", nimi: "Boggo Oy", rooli: "owner" }] });
+      return json(200, { kayttaja: { sahkoposti: "don@example.com", nimi: "Don" }, organisaatio: "boggo", organisaatiot: orgs ?? [{ tunnus: "boggo", nimi: "Boggo Oy", rooli: "owner" }] });
     if (p === "/api/cli/tunnus") return new Response(null, { status: 204 });
     if (p === "/api/cli/tunnista") {
       const b = JSON.parse(init.body);
-      return json(200, { sovellukset: b.tiedostot.includes("package.json") ? [{ kansio: "", tyyppi: "NextJS", kaytto: "verkkosivu", portti: 3000 }] : [] });
+      return json(200, { sovellukset: b.tiedostot.includes("package.json") ? [{ kansio: "", tyyppi: "NextJS", kaytto, portti: 3000 }] : [] });
     }
     if (p === "/api/cli/nimi") return json(200, u.searchParams.get("nimi") === "varattu" ? { vapaa: false, syy: "Nimi varattu on jo käytössä.", ehdotukset: ["varattu-2"] } : { vapaa: true });
     if (p === "/api/cli/projektit" && init.method === "GET")
@@ -47,6 +52,10 @@ function fakePortal({ fail, follow } = {}) {
       const b = JSON.parse(init.body);
       projects.push({ nimi: b.nimi, vmid: 1234, tyyppi: "palvelin", tila: "valmis", osoite: `https://${b.nimi}.boggo.app`, julkaistava: true });
       return json(201, { vmid: 1234, nimi: b.nimi, osoite: `https://${b.nimi}.boggo.app` });
+    }
+    if (p === "/api/cli/projektit/1234/julkaisut" && upload) {
+      const r = await upload(++uploads, json);
+      if (r) return r;
     }
     if (p === "/api/cli/projektit/1234/julkaisut") return json(201, { numero: 7, tavut: init.body.length, tiedostot: 2, sovellus: "NextJS", osoite: "https://kauppa.boggo.app" });
     if (p === "/api/cli/projektit/1234/julkaisut/7") {
@@ -341,4 +350,108 @@ test("paketointi: tiedosto poistettu läpikäynnin jälkeen → virhe { code: un
   assert.deepEqual(unreadable, []);
   rmSync(join(dir, "app", "page.tsx"));
   await assert.rejects(packEntries(entries), (e) => e.code === "unreadable" && e.path === "app/page.tsx" && e.reason === "ENOENT");
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// Katselmoinnin kohdat 5–10 (Donin päätös 27.11.2026)
+
+// Pääte: syöte riveinä (Enter = tyhjä rivi), kysymykset stderriin.
+async function runTty(argv, { home, cwd, portal, input = [] }) {
+  const stdout = sink();
+  const stderr = sink();
+  stderr.isTTY = true;
+  const stdin = new PassThrough();
+  stdin.isTTY = true;
+  stdin.end(input.map((l) => `${l}\n`).join(""));
+  const code = await main({
+    argv,
+    env: { BOGGO_LANG: "fi", BOGGO_URL: "https://portaali.test", BOGGO_NO_BROWSER: "1" },
+    stdout,
+    stderr,
+    stdin,
+    home,
+    cwd,
+    fetch: portal.fetch,
+    sleep: async () => {},
+  });
+  return { code, out: stdout.text, err: stderr.text };
+}
+
+test("5: lähetyksen aikaraja paketin koosta (5–40 min)", () => {
+  assert.equal(uploadTimeoutMs(1024), 5 * 60_000);
+  assert.equal(uploadTimeoutMs(100 * 1_048_576), 120_000 + 1600 * 1000);
+  assert.equal(uploadTimeoutMs(10 * 1024 ** 3), 40 * 60_000);
+});
+
+test("5: lähetyksen aikaraja → selkeä viesti ja tarkistusosoite, ei uudelleenlähetystä", async () => {
+  const portal = fakePortal({
+    upload: () => {
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    },
+  });
+  const r = await run(["push", "--prod"], { home: mkdtempSync(join(tmpdir(), "boggo-koti-")), cwd: linkedProject(), portal, env: CI });
+  assert.equal(r.code, 1);
+  assert.match(r.err, /kesti liian kauan/);
+  assert.match(r.err, /https:\/\/portaali\.test\/kauppa\/julkaisut/);
+  assert.equal(portal.calls.filter((c) => c.path === "/api/cli/projektit/1234/julkaisut").length, 1);
+});
+
+test("6: projekti luonnissa tunnistetaan koodista (syy luonti_kesken), ei tekstistä", async () => {
+  const portal = fakePortal({ upload: (n, json) => (n === 1 ? json(409, { error: "Project is being created", syy: "luonti_kesken" }) : undefined) });
+  const r = await run(["push", "--prod"], { home: mkdtempSync(join(tmpdir(), "boggo-koti-")), cwd: linkedProject(), portal, env: CI });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /luonnissa/);
+  // Muu 409 ilman koodia ei odota, vaikka tekstissä olisi "valmis"-tyyppinen sana toisella kielellä.
+  const other = fakePortal({ upload: (_n, json) => json(409, { error: "Tähän projektiin ei voi julkaista komentoriviltä." }) });
+  const r2 = await run(["push", "--prod"], { home: mkdtempSync(join(tmpdir(), "boggo-koti-")), cwd: linkedProject(), portal: other, env: CI });
+  assert.equal(r2.code, 1);
+  assert.equal(other.calls.filter((c) => c.path === "/api/cli/projektit/1234/julkaisut").length, 1);
+});
+
+test("7: selaimen avaus Windowsissa ilman cmd:tä, &-merkki säilyy osana osoitetta", () => {
+  const url = "https://cloud.boggo.fi/cli?koodi=KHTR-4MXA&x=1";
+  assert.deepEqual(browserCommand("win32", url), ["rundll32", ["url.dll,FileProtocolHandler", url]]);
+  assert.deepEqual(browserCommand("darwin", url), ["open", [url]]);
+  assert.deepEqual(browserCommand("linux", url), ["xdg-open", [url]]);
+});
+
+test("8: CI ja useampi organisaatio: --org pakollinen, ei hiljaista oletusta; ohje kertoo --orgin", async () => {
+  const orgs = [{ tunnus: "boggo", nimi: "Boggo Oy", rooli: "owner" }, { tunnus: "lpk", nimi: "LPK", rooli: "admin" }];
+  const kauppa = { nimi: "kauppa", vmid: 1234, tyyppi: "palvelin", tila: "valmis", osoite: "https://kauppa.boggo.app", julkaistava: true };
+  const cwd = project();
+  const portal = fakePortal({ orgs, projects: [kauppa] });
+  const r = await run(["push", "--prod", "--project", "kauppa"], { home: mkdtempSync(join(tmpdir(), "boggo-koti-")), cwd, portal, env: CI });
+  assert.equal(r.code, 1);
+  assert.match(r.err, /--org/);
+  assert.equal(portal.calls.filter((c) => c.method === "POST").length, 0);
+  const ok = await run(["push", "--prod", "--project", "kauppa", "--org", "lpk"], { home: mkdtempSync(join(tmpdir(), "boggo-koti-")), cwd, portal, env: CI });
+  assert.equal(ok.code, 0, ok.err);
+  assert.equal(portal.calls.find((c) => c.method === "POST" && c.path === "/api/cli/projektit/1234/julkaisut").org, "lpk");
+  const help = await run(["help", "push"], { home: mkdtempSync(join(tmpdir(), "boggo-koti-")), cwd, portal });
+  assert.match(help.out + help.err, /--org/);
+});
+
+test("9: push yhdistämättömässä kansiossa, initin peruminen → \"Peruttu.\" kerran ja paluukoodi 1", async () => {
+  const portal = fakePortal();
+  const home = mkdtempSync(join(tmpdir(), "boggo-koti-"));
+  const cwd = project();
+  await run(["login"], { home, cwd, portal });
+  const r = await runTty(["push", "--prod"], { home, cwd, portal, input: ["", "", "", "n"] });
+  assert.equal(r.code, 1);
+  assert.equal((r.out + r.err).split("Peruttu.").length - 1, 1, r.out + r.err);
+  assert.equal(portal.calls.filter((c) => c.method === "POST" && c.path === "/api/cli/projektit").length, 0);
+});
+
+test("10: init, portaali ehdottaa muuta käyttöä → oletus Verkkosivu ja pelkkä Enter kelpaa", async () => {
+  for (const kaytto of ["muu", null]) {
+    const portal = fakePortal({ kaytto });
+    const home = mkdtempSync(join(tmpdir(), "boggo-koti-"));
+    const cwd = project();
+    await run(["login"], { home, cwd, portal });
+    const r = await runTty(["init"], { home, cwd, portal, input: ["", "", "", ""] });
+    assert.equal(r.code, 0, `${kaytto}: ${r.err}`);
+    const created = portal.calls.find((c) => c.path === "/api/cli/projektit" && c.method === "POST");
+    assert.equal(JSON.parse(created.body).kaytto, "verkkosivu");
+    assert.doesNotMatch(r.err, /Kirjoita numero/);
+  }
 });

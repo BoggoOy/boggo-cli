@@ -39,6 +39,10 @@ Paketista jäävät pois `.git`, `node_modules`, `.boggo`, `.env`-tiedostot (pai
 `.gitignoren` ja `.boggoignoren` tiedostot sekä yli 50 Mt:n tiedostot; raja 100 Mt pakattuna. Kirjautumistunnus on tiedostossa
 `~/.boggo/tunnus.json` (600); CI:ssä ympäristömuuttuja `BOGGO_TOKEN`. Kansion yhteys on kansiossa `.boggo` (lisätään .gitignoreen).
 
+CI:ssä kansiota ei ole yhdistetty (`.boggo` on .gitignoressa), joten anna projekti ja organisaatio:
+`BOGGO_TOKEN=… npx boggo push --prod --project kauppa --org yritys`. Jos kuulut useampaan organisaatioon, `--org` on pakollinen
+ilman päätettä; oletusorganisaatiota ei valita hiljaa.
+
 `boggo push` päättyy paluukoodiin 0 vain, kun rakennus tai julkaisu onnistui. Jos julkaisu kestää yli 45 minuuttia tai
 Boggo Cloudiin ei saada yhteyttä 5 minuuttiin, seuranta loppuu paluukoodiin 1 (julkaisu jatkuu portaalissa).
 
