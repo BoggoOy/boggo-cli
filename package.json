@@ -1,7 +1,7 @@
 {
   "name": "boggo",
-  "version": "0.0.2",
-  "description": "Boggo Cloud -komentorivityökalu (tulossa) / Boggo Cloud command-line tool (coming soon)",
+  "version": "0.1.0",
+  "description": "Boggo Cloud -komentorivityökalu: julkaise projekti omalta koneelta / Boggo Cloud command-line tool: deploy from your machine",
   "license": "MIT",
   "author": "Boggo Oy",
   "homepage": "https://cloud.boggo.fi",

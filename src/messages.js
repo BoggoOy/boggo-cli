@@ -1,8 +1,6 @@
 // Kaikki Boggo CLI:n tekstit suomeksi ja englanniksi. Uusi teksti lisätään molemmille kielille (testi tarkistaa).
 // Komentojen nimet ja valinnat ovat samat kummallakin kielellä; vain selitykset käännetään.
 
-export const LANGS = ["fi", "en"];
-
 export const SITE_URL = "https://cloud.boggo.fi";
 
 // Ensimmäisen käyttökerran kysymys on aina kaksikielinen, koska kieltä ei vielä tiedetä.
@@ -12,7 +10,7 @@ export const LANGUAGE_PROMPT_RETRY = "Kirjoita 1 tai 2 / Type 1 or 2";
 export const TEXT = {
   fi: {
     tagline: "Boggo Cloudin komentorivityökalu: julkaise ja hallitse projekteja omalta koneeltasi.",
-    shortNote: "Useimmat komennot ovat vielä tulossa.",
+    shortNote: "Aloita: boggo login, sitten projektin kansiossa boggo init ja boggo push --prod.",
     usageTitle: "Käyttö",
     usageLine: "boggo <komento> [valinnat]",
     allCommands: "Kaikki komennot",
@@ -36,6 +34,7 @@ export const TEXT = {
     ],
     unknownCommand: (name) => `Tuntematon komento: ${name}. Katso boggo help.`,
     unknownOption: (name) => `Tuntematon valinta: ${name}. Katso boggo help.`,
+    optionNeedsValue: (name) => `Valinta ${name} tarvitsee arvon.`,
     unknownLanguage: (value) => `Tuntematon kieli: ${value}. Vaihtoehdot: fi, en.`,
     langNeedsValue: "Valinta --lang tarvitsee arvon: fi tai en.",
     unknownSetting: (name) => `Tuntematon asetus: ${name}. Katso boggo help config.`,
@@ -55,7 +54,7 @@ export const TEXT = {
   },
   en: {
     tagline: "Boggo Cloud command-line tool: deploy and manage projects from your own machine.",
-    shortNote: "Most commands are coming soon.",
+    shortNote: "Start: boggo login, then in your project folder boggo init and boggo push --prod.",
     usageTitle: "Usage",
     usageLine: "boggo <command> [options]",
     allCommands: "All commands",
@@ -79,6 +78,7 @@ export const TEXT = {
     ],
     unknownCommand: (name) => `Unknown command: ${name}. See boggo help.`,
     unknownOption: (name) => `Unknown option: ${name}. See boggo help.`,
+    optionNeedsValue: (name) => `Option ${name} needs a value.`,
     unknownLanguage: (value) => `Unknown language: ${value}. Choices: fi, en.`,
     langNeedsValue: "Option --lang needs a value: fi or en.",
     unknownSetting: (name) => `Unknown setting: ${name}. See boggo help config.`,
@@ -103,24 +103,26 @@ export const GROUPS = [
   {
     id: "account",
     rows: [
-      { cmd: "login", topic: "login", coming: true, fi: "Kirjaudu Boggo Cloudiin selaimella", en: "Log in to Boggo Cloud with your browser" },
-      { cmd: "logout", topic: "logout", coming: true, fi: "Kirjaudu ulos tältä koneelta", en: "Log out on this machine" },
-      { cmd: "whoami", topic: "whoami", coming: true, fi: "Näytä kirjautunut käyttäjä", en: "Show the logged-in user" },
+      { cmd: "login", topic: "login", coming: false, fi: "Kirjaudu Boggo Cloudiin selaimella", en: "Log in to Boggo Cloud with your browser" },
+      { cmd: "logout", topic: "logout", coming: false, fi: "Kirjaudu ulos tältä koneelta", en: "Log out on this machine" },
+      { cmd: "whoami", topic: "whoami", coming: false, fi: "Näytä kirjautunut käyttäjä", en: "Show the logged-in user" },
     ],
   },
   {
     id: "projects",
     rows: [
-      { cmd: "projects", topic: "projects", coming: true, fi: "Listaa organisaation projektit", en: "List your organization's projects" },
-      { cmd: "link", topic: "link", coming: true, fi: "Yhdistä kansio projektiin", en: "Link this folder to a project" },
-      { cmd: "open", topic: "open", coming: true, fi: "Avaa projekti selaimessa", en: "Open the project in your browser" },
+      { cmd: "init", topic: "init", coming: false, fi: "Luo projekti tästä kansiosta", en: "Create a project from this folder" },
+      { cmd: "projects", topic: "projects", coming: false, fi: "Listaa organisaation projektit", en: "List your organization's projects" },
+      { cmd: "link", topic: "link", coming: false, fi: "Yhdistä kansio projektiin", en: "Link this folder to a project" },
+      { cmd: "open", topic: "open", coming: false, fi: "Avaa projekti selaimessa", en: "Open the project in your browser" },
     ],
   },
   {
     id: "deploy",
     rows: [
-      { cmd: "push", topic: "push", coming: true, fi: "Rakenna ja tarkista julkaisematta", en: "Build and check without deploying" },
-      { cmd: "push --prod", topic: "push", coming: true, fi: "Rakenna ja julkaise tuotantoon", en: "Build and deploy to production" },
+      { cmd: "push", topic: "push", coming: false, fi: "Rakenna ja tarkista julkaisematta", en: "Build and check without deploying" },
+      { cmd: "push --prod", topic: "push", coming: false, fi: "Rakenna ja julkaise tuotantoon", en: "Build and deploy to production" },
+      { cmd: "promote", topic: "promote", coming: false, fi: "Julkaise rakennus tuotantoon rakentamatta uudelleen", en: "Deploy a build to production without rebuilding" },
       { cmd: "logs", topic: "logs", coming: true, fi: "Näytä sovelluksen lokit", en: "Show the app's logs" },
     ],
   },
@@ -143,7 +145,7 @@ export const GROUPS = [
 // Komentojen tarkemmat ohjeet (boggo help <komento>). Valinnat ja esimerkit: [komento tai valinta, selitys].
 export const COMMANDS = {
   login: {
-    coming: true,
+    coming: false,
     fi: {
       usage: "boggo login",
       description: [
@@ -164,7 +166,7 @@ export const COMMANDS = {
     },
   },
   logout: {
-    coming: true,
+    coming: false,
     fi: {
       usage: "boggo logout",
       description: ["Poistaa tunnuksen tältä koneelta ja mitätöi sen Boggo Cloudissa."],
@@ -179,7 +181,7 @@ export const COMMANDS = {
     },
   },
   whoami: {
-    coming: true,
+    coming: false,
     fi: {
       usage: "boggo whoami",
       description: ["Näyttää, kenellä tunnuksella olet kirjautunut ja mihin organisaatioihin kuulut."],
@@ -194,7 +196,7 @@ export const COMMANDS = {
     },
   },
   projects: {
-    coming: true,
+    coming: false,
     fi: {
       usage: "boggo projects [valinnat]",
       description: ["Listaa organisaation projektit, niiden tilan ja osoitteen."],
@@ -214,8 +216,49 @@ export const COMMANDS = {
       examples: [["boggo projects", "List projects"]],
     },
   },
+  init: {
+    coming: false,
+    fi: {
+      usage: "boggo init [valinnat]",
+      description: [
+        "Luo Boggo Cloudiin uuden projektin tästä kansiosta ja yhdistää kansion siihen. Komento tunnistaa",
+        "sovelluksen (esim. Next.js tai Dockerfile) ja kysyy nimen, käytön ja koon. Voit myös valita",
+        "olemassa olevan projektin. Sen jälkeen julkaise komennolla boggo push --prod.",
+      ],
+      options: [
+        ["--name <nimi>", "Projektin nimi (osoite <nimi>.boggo.app)"],
+        ["--use verkkosivu|rajapinta", "Mitä sovellus tekee"],
+        ["--size pieni|perus|iso", "Koko (oletus perus)"],
+        ["--org <tunniste>", "Organisaatio, jos kuulut useampaan"],
+        ["--yes", "Älä kysy mitään (oletukset)"],
+      ],
+      examples: [
+        ["boggo init", "Luo projekti ohjatusti"],
+        ["boggo init --name kauppa --yes", "Luo projekti kauppa kysymättä"],
+      ],
+    },
+    en: {
+      usage: "boggo init [options]",
+      description: [
+        "Creates a new Boggo Cloud project from this folder and links the folder to it. The command",
+        "detects the app (e.g. Next.js or a Dockerfile) and asks for the name, use and size. You can",
+        "also pick an existing project. Then deploy with boggo push --prod.",
+      ],
+      options: [
+        ["--name <name>", "Project name (address <name>.boggo.app)"],
+        ["--use site|api", "What the app does"],
+        ["--size small|basic|large", "Size (default basic)"],
+        ["--org <slug>", "Organization, if you belong to several"],
+        ["--yes", "Don't ask anything (defaults)"],
+      ],
+      examples: [
+        ["boggo init", "Create a project step by step"],
+        ["boggo init --name shop --yes", "Create the project shop without questions"],
+      ],
+    },
+  },
   link: {
-    coming: true,
+    coming: false,
     fi: {
       usage: "boggo link [valinnat]",
       description: [
@@ -248,39 +291,45 @@ export const COMMANDS = {
     },
   },
   push: {
-    coming: true,
+    coming: false,
     fi: {
       usage: "boggo push [valinnat]",
       description: [
         "Paketoi nykyisen kansion ja rakentaa sen Boggo Cloudissa julkaisematta, joten näet ennen",
-        "tuotantoa, onnistuuko rakennus. Valinnalla --prod julkaisu menee tuotantoon.",
+        "tuotantoa, onnistuuko rakennus. Valinnalla --prod julkaisu menee tuotantoon. Jos kansiota",
+        "ei ole yhdistetty projektiin, komento aloittaa ensin boggo initin.",
         "Mukaan eivät tule .git, node_modules, .env-tiedostot eivätkä .gitignoren tiedostot.",
         "Enimmäiskoko on 100 Mt pakattuna.",
       ],
       options: [
         ["--prod", "Julkaise tuotantoon rakennuksen jälkeen"],
         ["--project <nimi>", "Projekti ilman yhdistettyä kansiota (boggo link)"],
+        ["--org <tunniste>", "Organisaatio, jos kuulut useampaan (CI:ssä pakollinen silloin)"],
       ],
       examples: [
         ["boggo push", "Rakenna ja tarkista"],
         ["boggo push --prod", "Rakenna ja julkaise tuotantoon"],
+        ["BOGGO_TOKEN=… boggo push --prod --project kauppa --org yritys", "CI: julkaise ilman yhdistettyä kansiota"],
       ],
     },
     en: {
       usage: "boggo push [options]",
       description: [
         "Packs the current folder and builds it in Boggo Cloud without deploying, so you see before",
-        "production whether the build succeeds. With --prod the deployment goes to production.",
+        "production whether the build succeeds. With --prod the deployment goes to production. If the",
+        "folder isn't linked to a project, the command runs boggo init first.",
         "The upload leaves out .git, node_modules, .env files and files in .gitignore.",
         "The maximum size is 100 MB packed.",
       ],
       options: [
         ["--prod", "Deploy to production after the build"],
         ["--project <name>", "Project, without a linked folder (boggo link)"],
+        ["--org <slug>", "Organization, if you belong to several (required in CI then)"],
       ],
       examples: [
         ["boggo push", "Build and check"],
         ["boggo push --prod", "Build and deploy to production"],
+        ["BOGGO_TOKEN=… boggo push --prod --project shop --org company", "CI: deploy without a linked folder"],
       ],
     },
   },
@@ -346,8 +395,45 @@ export const COMMANDS = {
       ],
     },
   },
+  promote: {
+    coming: false,
+    fi: {
+      usage: "boggo promote [numero] [valinnat]",
+      description: [
+        "Julkaisee onnistuneen rakennuksen (boggo push) tuotantoon sellaisenaan, ilman uutta rakennusta.",
+        "Ilman numeroa julkaistaan kansion viimeisin rakennus. Rakennus on tallessa 24 tuntia, ja vain",
+        "projektin uusin onnistunut rakennus voidaan julkaista.",
+      ],
+      options: [
+        ["--force", "Julkaise, vaikka julkiset muuttujat (NEXT_PUBLIC_, VITE_) ovat muuttuneet rakennuksen jälkeen"],
+        ["--project <nimi>", "Projekti ilman yhdistettyä kansiota (anna myös numero)"],
+        ["--org <tunniste>", "Organisaatio, jos kuulut useampaan"],
+      ],
+      examples: [
+        ["boggo push && boggo promote", "Rakenna, tarkista ja julkaise sama rakennus"],
+        ["boggo promote 12", "Julkaise rakennus #12"],
+      ],
+    },
+    en: {
+      usage: "boggo promote [number] [options]",
+      description: [
+        "Deploys a successful build (boggo push) to production as it is, without building again.",
+        "Without a number, the folder's latest build is deployed. A build is kept for 24 hours, and only",
+        "the project's newest successful build can be deployed.",
+      ],
+      options: [
+        ["--force", "Deploy even if public variables (NEXT_PUBLIC_, VITE_) changed after the build"],
+        ["--project <name>", "Project, without a linked folder (also give the number)"],
+        ["--org <slug>", "Organization, if you belong to several"],
+      ],
+      examples: [
+        ["boggo push && boggo promote", "Build, check and deploy the same build"],
+        ["boggo promote 12", "Deploy build #12"],
+      ],
+    },
+  },
   open: {
-    coming: true,
+    coming: false,
     fi: {
       usage: "boggo open [valinnat]",
       description: ["Avaa projektin julkisen osoitteen selaimessa."],

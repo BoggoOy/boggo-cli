@@ -64,7 +64,7 @@ export async function askLanguage({ stdin, stderr }) {
 }
 
 // Rivit syötteestä jonona, jotta samassa palassa tulleet rivit eivät katoa.
-function lineReader(stream) {
+export function lineReader(stream) {
   let buffer = "";
   const queue = [];
   let ended = false;

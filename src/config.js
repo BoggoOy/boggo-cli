@@ -1,4 +1,4 @@
-// Käyttäjän asetukset: ~/.boggo/config.json (kansio 700, tiedosto 600, koska myöhemmin samaan kansioon tulee kirjautumistunnus).
+// Käyttäjän asetukset: ~/.boggo/config.json (kansio 700, tiedosto 600, koska samassa kansiossa on kirjautumistunnus tunnus.json).
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -6,7 +6,7 @@ export function configDir(home) {
   return join(home, ".boggo");
 }
 
-export function configPath(home) {
+function configPath(home) {
   return join(configDir(home), "config.json");
 }
 
