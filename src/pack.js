@@ -7,7 +7,7 @@ import { createGzip } from "node:zlib";
 
 export const MB = 1_048_576;
 export const UPLOAD_MAX_BYTES = 100 * MB;
-export const FILE_MAX_BYTES = 50 * MB;
+const FILE_MAX_BYTES = 50 * MB;
 
 // Aina pois: versionhallinta, riippuvuudet, Boggon oma kansio ja kehyksien välimuistit (rakennetaan Boggo Cloudissa uudelleen).
 const ALWAYS_DIRS = new Set([".git", ".hg", ".svn", "node_modules", ".boggo", ".next", ".nuxt", ".output", ".svelte-kit", ".turbo", ".vercel", ".cache"]);

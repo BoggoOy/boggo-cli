@@ -1,8 +1,6 @@
 // Kaikki Boggo CLI:n tekstit suomeksi ja englanniksi. Uusi teksti lisätään molemmille kielille (testi tarkistaa).
 // Komentojen nimet ja valinnat ovat samat kummallakin kielellä; vain selitykset käännetään.
 
-export const LANGS = ["fi", "en"];
-
 export const SITE_URL = "https://cloud.boggo.fi";
 
 // Ensimmäisen käyttökerran kysymys on aina kaksikielinen, koska kieltä ei vielä tiedetä.
@@ -124,6 +122,7 @@ export const GROUPS = [
     rows: [
       { cmd: "push", topic: "push", coming: false, fi: "Rakenna ja tarkista julkaisematta", en: "Build and check without deploying" },
       { cmd: "push --prod", topic: "push", coming: false, fi: "Rakenna ja julkaise tuotantoon", en: "Build and deploy to production" },
+      { cmd: "promote", topic: "promote", coming: false, fi: "Julkaise rakennus tuotantoon rakentamatta uudelleen", en: "Deploy a build to production without rebuilding" },
       { cmd: "logs", topic: "logs", coming: true, fi: "Näytä sovelluksen lokit", en: "Show the app's logs" },
     ],
   },
@@ -393,6 +392,43 @@ export const COMMANDS = {
       examples: [
         ["boggo logs", "Latest lines"],
         ["boggo logs --follow", "Follow the log"],
+      ],
+    },
+  },
+  promote: {
+    coming: false,
+    fi: {
+      usage: "boggo promote [numero] [valinnat]",
+      description: [
+        "Julkaisee onnistuneen rakennuksen (boggo push) tuotantoon sellaisenaan, ilman uutta rakennusta.",
+        "Ilman numeroa julkaistaan kansion viimeisin rakennus. Rakennus on tallessa 24 tuntia, ja vain",
+        "projektin uusin onnistunut rakennus voidaan julkaista.",
+      ],
+      options: [
+        ["--force", "Julkaise, vaikka julkiset muuttujat (NEXT_PUBLIC_, VITE_) ovat muuttuneet rakennuksen jälkeen"],
+        ["--project <nimi>", "Projekti ilman yhdistettyä kansiota (anna myös numero)"],
+        ["--org <tunniste>", "Organisaatio, jos kuulut useampaan"],
+      ],
+      examples: [
+        ["boggo push && boggo promote", "Rakenna, tarkista ja julkaise sama rakennus"],
+        ["boggo promote 12", "Julkaise rakennus #12"],
+      ],
+    },
+    en: {
+      usage: "boggo promote [number] [options]",
+      description: [
+        "Deploys a successful build (boggo push) to production as it is, without building again.",
+        "Without a number, the folder's latest build is deployed. A build is kept for 24 hours, and only",
+        "the project's newest successful build can be deployed.",
+      ],
+      options: [
+        ["--force", "Deploy even if public variables (NEXT_PUBLIC_, VITE_) changed after the build"],
+        ["--project <name>", "Project, without a linked folder (also give the number)"],
+        ["--org <slug>", "Organization, if you belong to several"],
+      ],
+      examples: [
+        ["boggo push && boggo promote", "Build, check and deploy the same build"],
+        ["boggo promote 12", "Deploy build #12"],
       ],
     },
   },

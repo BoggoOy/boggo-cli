@@ -64,8 +64,17 @@ export class ApiError extends Error {
 }
 
 // Kutsu portaaliin. body: olio (JSON) tai Buffer (paketti). Virhe: ApiError portaalin selkokielisellä viestillä.
+// Tunnus kulkee vain salattuna: http:// kelpaa ainoastaan omalla koneella (portaalin kehitys).
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
 export async function call(ctx, method, path, { body, org, query, timeoutMs = 60_000, fetchImpl = fetch } = {}) {
-  const url = new URL(`${ctx.portal}${path}`);
+  let url;
+  try {
+    url = new URL(`${ctx.portal}${path}`);
+  } catch {
+    throw new ApiError(0, ctx.t.badPortalUrl(ctx.portal));
+  }
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && LOOPBACK.has(url.hostname))) throw new ApiError(0, ctx.t.badPortalUrl(ctx.portal));
   for (const [k, v] of Object.entries(query ?? {})) if (v !== undefined) url.searchParams.set(k, String(v));
   const headers = { Accept: "application/json", "User-Agent": `boggo-cli/${ctx.version}` };
   if (ctx.token) headers.Authorization = `Bearer ${ctx.token}`;

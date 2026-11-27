@@ -1,4 +1,4 @@
-// Komennot, jotka puhuvat Boggo Cloudin kanssa: login, logout, whoami, projects, init, link, push ja open.
+// Komennot, jotka puhuvat Boggo Cloudin kanssa: login, logout, whoami, projects, init, link, push, promote ja open.
 // Kulku uudelle projektille: boggo login → boggo init (uusi projekti tai olemassa oleva) → boggo push --prod.
 // Tekstit: src/command-texts.js (suomi ja englanti).
 import { spawn } from "node:child_process";
@@ -6,6 +6,7 @@ import { ApiError, call, deleteLogin, deviceName, portalUrl, readLogin, saveLogi
 import { CMD } from "./command-texts.js";
 import { lineReader } from "./lang.js";
 import { SITE_URL } from "./messages.js";
+import { highlight, painter, safe } from "./paint.js";
 import { readLink, saveLink, suggestName } from "./link.js";
 import { collect, packEntries, sizeText, UPLOAD_MAX_BYTES } from "./pack.js";
 
@@ -17,6 +18,15 @@ export function context(io, lang, args, version) {
   const login = readLogin(io.home, io.env);
   const interactive = Boolean(io.stdin.isTTY && io.stderr.isTTY) && !(io.env.CI && io.env.CI !== "false" && io.env.CI !== "0");
   let lines = null;
+  // Värit erikseen kummallekin virralle (putki tai tiedosto saa pelkän tekstin). blank: viimeisin rivi oli tyhjä, jotta gap()
+  // ei koskaan tulosta kahta tyhjää riviä peräkkäin.
+  const c = painter(io.stderr, io.env);
+  const o = painter(io.stdout, io.env);
+  let blank = false;
+  const write = (stream, paint, s) => {
+    stream.write(`${highlight(paint, safe(s))}\n`);
+    blank = s === "";
+  };
   const ctx = {
     t,
     lang,
@@ -31,19 +41,31 @@ export function context(io, lang, args, version) {
     fetch: io.fetch ?? fetch,
     sleep: io.sleep ?? sleep,
     now: io.now ?? Date.now,
-    out: (s = "") => io.stdout.write(`${s}\n`),
-    err: (s = "") => io.stderr.write(`${s}\n`),
+    c,
+    o,
+    out: (s = "") => write(io.stdout, o, s),
+    err: (s = "") => write(io.stderr, c, s),
+    // Koneluettava tuloste (--json) sellaisenaan.
+    raw: (s) => io.stdout.write(`${s}\n`),
+    // Tyhjä rivi osien väliin (stderr, joten stdoutin skriptikäyttö ei muutu).
+    gap() {
+      if (blank) return;
+      io.stderr.write("\n");
+      blank = true;
+    },
     async ask(question, fallback = "") {
       lines ??= lineReader(io.stdin);
-      io.stderr.write(`${question}${fallback ? ` (${fallback})` : ""}: `);
+      io.stderr.write(safe(`${c.bold(question)}${fallback ? c.dim(` (${fallback})`) : ""}: `));
+      blank = false;
       const line = await lines.next();
       if (line === null) throw new UserError(t.inputEnded);
       return line.trim() || fallback;
     },
     // Valinta numerolla; Enter = oletus.
     async choose(question, options, def = 0) {
-      io.stderr.write(`${question}\n`);
-      options.forEach((o, i) => io.stderr.write(`  ${i + 1}) ${o}${i === def ? ` ${t.defaultMark}` : ""}\n`));
+      ctx.gap();
+      io.stderr.write(`${c.bold(question)}\n`);
+      options.forEach((opt, i) => io.stderr.write(safe(`  ${c.cyan(`${i + 1})`)} ${opt}${i === def ? ` ${c.dim(t.defaultMark)}` : ""}\n`)));
       for (;;) {
         const v = await ctx.ask(">", String(def + 1));
         const n = Number(v);
@@ -62,9 +84,10 @@ export function context(io, lang, args, version) {
 }
 
 // Käyttäjälle näytettävä virhe ilman pinoa.
-export class UserError extends Error {}
+class UserError extends Error {}
 
-export async function runCommand(ctx, command, rest) {
+export async function runCommand(ctx, command) {
+  ctx.gap();
   try {
     switch (command) {
       case "login":
@@ -81,25 +104,28 @@ export async function runCommand(ctx, command, rest) {
         return await link(ctx);
       case "push":
         return await push(ctx);
-      case "deploy":
-        ctx.args.prod = true;
-        return await push(ctx);
+      case "promote":
+        return await promote(ctx);
       case "open":
         return await open(ctx);
       default:
-        void rest;
         throw new UserError(ctx.t.unknown(command));
     }
   } catch (e) {
     if (e instanceof UserError || e instanceof ApiError) {
-      ctx.err(`${ctx.t.errorMark} ${e.message}`);
+      ctx.gap();
+      ctx.err(`${ctx.c.red(ctx.c.bold(ctx.t.errorMark))} ${e.message}`);
       return 1;
     }
     throw e;
   } finally {
+    ctx.gap();
     ctx.close();
   }
 }
+
+const warn = (ctx, text) => ctx.err(`${ctx.c.yellow(ctx.c.bold(ctx.t.warnMark))} ${text}`);
+const done = (ctx, text) => ctx.out(`${ctx.o.green("✓")} ${ctx.o.bold(text)}`);
 
 function requireLogin(ctx) {
   if (ctx.login?.invalid) throw new UserError(ctx.t.tokenInvalid);
@@ -119,6 +145,8 @@ export function browserCommand(platform, url) {
 
 function openBrowser(ctx, url) {
   if (ctx.io.env.BOGGO_NO_BROWSER || !ctx.interactive) return false;
+  // Osoite voi tulla kansion .boggo-tiedostosta tai portaalista: vain verkko-osoitteet, ei file:// eikä muita ohjelmia avaavia.
+  if (!/^https?:\/\/\S+$/i.test(url)) return false;
   const [cmd, args] = browserCommand(process.platform, url);
   try {
     const child = spawn(cmd, args, { stdio: "ignore", detached: true });
@@ -157,10 +185,13 @@ async function login(ctx) {
   // Vastaus ilman laitekoodia ei ole CLI-rajapinnan (esim. HTML-sivu tilakoodilla 200).
   if (typeof start.laitekoodi !== "string" || typeof start.kayttajakoodi !== "string" || typeof start.osoite !== "string") throw cliNotSupported(ctx);
   ctx.err(t.loginOpen);
-  ctx.err(`  ${start.osoite}`);
-  ctx.err(t.loginCode(start.kayttajakoodi));
+  ctx.gap();
+  ctx.err(`  ${ctx.c.underline(start.osoite)}`);
+  ctx.gap();
+  ctx.err(t.loginCode(ctx.c.bold(start.kayttajakoodi)));
   openBrowser(ctx, start.osoite);
-  ctx.err(t.loginWaiting);
+  ctx.gap();
+  ctx.err(ctx.c.dim(t.loginWaiting));
   const deadline = ctx.now() + (start.voimassa_s ?? 600) * 1000;
   while (ctx.now() < deadline) {
     await ctx.sleep((start.valit_s ?? 2) * 1000);
@@ -174,7 +205,9 @@ async function login(ctx) {
     if (res.status === 202) continue;
     if (!TOKEN_RE.test(res.data.tunnus ?? "")) throw cliNotSupported(ctx);
     saveLogin(ctx.io.home, { tunnus: res.data.tunnus, portaali: ctx.portal, sahkoposti: res.data.kayttaja?.sahkoposti ?? "" });
-    ctx.out(t.loggedIn(res.data.kayttaja?.sahkoposti ?? ""));
+    ctx.gap();
+    done(ctx, t.loggedIn(res.data.kayttaja?.sahkoposti ?? ""));
+    ctx.gap();
     ctx.out(t.nextInit);
     return 0;
   }
@@ -192,10 +225,10 @@ async function logout(ctx) {
     await ctx.api("DELETE", "/api/cli/tunnus");
   } catch (e) {
     // Vanhentunut tai jo mitätöity tunnus: poistetaan silti koneelta.
-    if (!(e instanceof ApiError && e.status === 401)) ctx.err(`${t.warnMark} ${t.revokeFailed}`);
+    if (!(e instanceof ApiError && e.status === 401)) warn(ctx, t.revokeFailed);
   }
   deleteLogin(ctx.io.home);
-  ctx.out(t.loggedOut);
+  done(ctx, t.loggedOut);
   return 0;
 }
 
@@ -207,11 +240,15 @@ async function me(ctx) {
 async function whoami(ctx) {
   const m = await me(ctx);
   if (ctx.args.json) {
-    ctx.out(JSON.stringify(m, null, 2));
+    ctx.raw(JSON.stringify(m, null, 2));
     return 0;
   }
-  ctx.out(`${m.kayttaja.nimi ? `${m.kayttaja.nimi} <${m.kayttaja.sahkoposti}>` : m.kayttaja.sahkoposti}`);
-  for (const o of m.organisaatiot) ctx.out(`  ${o.tunnus === m.organisaatio ? "*" : " "} ${o.nimi} (${o.tunnus}) · ${ctx.t.roles[o.rooli] ?? o.rooli}`);
+  const { o: paint } = ctx;
+  ctx.out(m.kayttaja.nimi ? `${paint.bold(m.kayttaja.nimi)} ${paint.dim(`<${m.kayttaja.sahkoposti}>`)}` : paint.bold(m.kayttaja.sahkoposti));
+  for (const org of m.organisaatiot) {
+    const current = org.tunnus === m.organisaatio;
+    ctx.out(`  ${current ? paint.green("*") : " "} ${current ? paint.bold(org.nimi) : org.nimi} ${paint.dim(`(${org.tunnus}) · ${ctx.t.roles[org.rooli] ?? org.rooli}`)}`);
+  }
   return 0;
 }
 
@@ -244,16 +281,21 @@ async function projects(ctx) {
   const org = ctx.args.org ?? readLink(ctx.cwd)?.organisaatio;
   const list = await projectList(ctx, org);
   if (ctx.args.json) {
-    ctx.out(JSON.stringify(list.projektit, null, 2));
+    ctx.raw(JSON.stringify(list.projektit, null, 2));
     return 0;
   }
   if (!list.projektit.length) {
     ctx.out(ctx.t.noProjects);
     return 0;
   }
+  // Leveys ennen värejä: värikoodit eivät näy, mutta lasketaan merkkijonon pituuteen.
+  const { o } = ctx;
+  const stateColor = { valmis: o.green, luodaan: o.yellow, virhe: o.red };
   const width = Math.max(...list.projektit.map((p) => p.nimi.length)) + 2;
-  for (const p of list.projektit)
-    ctx.out(`  ${p.nimi.padEnd(width)}${(ctx.t.kinds[p.tyyppi] ?? p.tyyppi).padEnd(12)}${(ctx.t.states[p.tila] ?? p.tila).padEnd(10)}${p.osoite ?? ""}`);
+  for (const p of list.projektit) {
+    const state = (ctx.t.states[p.tila] ?? p.tila).padEnd(10);
+    ctx.out(`  ${o.bold(p.nimi.padEnd(width))}${o.dim((ctx.t.kinds[p.tyyppi] ?? p.tyyppi).padEnd(12))}${(stateColor[p.tila] ?? String)(state)}${p.osoite ?? ""}`);
+  }
   return 0;
 }
 
@@ -270,8 +312,9 @@ async function detect(ctx, org) {
 
 function saveAndTell(ctx, org, p) {
   const gitignore = saveLink(ctx.cwd, { organisaatio: org, projekti: p.nimi, vmid: p.vmid, portaali: ctx.portal });
-  ctx.out(ctx.t.linked(p.nimi));
-  if (gitignore) ctx.out(ctx.t.gitignoreAdded);
+  ctx.gap();
+  done(ctx, ctx.t.linked(p.nimi));
+  if (gitignore) ctx.out(ctx.o.dim(ctx.t.gitignoreAdded));
 }
 
 async function init(ctx) {
@@ -279,14 +322,15 @@ async function init(ctx) {
   requireLogin(ctx);
   const existing = readLink(ctx.cwd);
   if (existing && !ctx.args.force) {
-    ctx.out(t.alreadyLinked(existing.projekti));
+    ctx.out(t.alreadyLinked(ctx.o.bold(existing.projekti)));
+    ctx.gap();
     ctx.out(t.nextPush);
     return 0;
   }
   const org = await pickOrg(ctx);
   const app = await detect(ctx, org);
   if (!app) throw new UserError(t.noApp);
-  ctx.err(t.found(app.tyyppi));
+  ctx.err(t.found(ctx.c.bold(app.tyyppi)));
 
   const list = await projectList(ctx, org);
   const deployable = list.projektit.filter((p) => p.julkaistava);
@@ -302,7 +346,7 @@ async function init(ctx) {
     if (n.vapaa) break;
     const why = n.syy ?? t.nameTaken(name);
     if (!ctx.interactive || ctx.args.name || ctx.args.yes) throw new UserError(`${why}${n.ehdotukset?.length ? ` ${t.suggestions(n.ehdotukset.join(", "))}` : ""}`);
-    ctx.err(`${t.warnMark} ${why}${n.ehdotukset?.length ? ` ${t.suggestions(n.ehdotukset.join(", "))}` : ""}`);
+    warn(ctx, `${why}${n.ehdotukset?.length ? ` ${t.suggestions(n.ehdotukset.join(", "))}` : ""}`);
     name = await ctx.ask(t.askName, n.ehdotukset?.[0] ?? "");
   }
 
@@ -319,14 +363,19 @@ async function init(ctx) {
     size = sizes[await ctx.choose(t.askSize, sizes.map((s) => `${s.nimi} · ${s.kuvaus} · ${s.hinta}`), Math.max(0, sizes.findIndex((s) => s.id === size)))].id;
   const chosen = sizes.find((s) => s.id === size);
 
-  if (ctx.interactive && !ctx.args.yes && !(await ctx.confirm(t.confirmCreate(name, chosen ? `${chosen.nimi}, ${chosen.hinta}` : size)))) {
-    ctx.out(t.cancelled);
-    return 1;
+  if (ctx.interactive && !ctx.args.yes) {
+    ctx.gap();
+    if (!(await ctx.confirm(t.confirmCreate(name, chosen ? `${chosen.nimi}, ${chosen.hinta}` : size)))) {
+      ctx.out(t.cancelled);
+      return 1;
+    }
   }
-  ctx.err(t.creating(name));
+  ctx.gap();
+  ctx.err(ctx.c.dim(t.creating(name)));
   const { data: created } = await ctx.api("POST", "/api/cli/projektit", { org, body: { nimi: name, koko: size, kaytto: use }, timeoutMs: 300_000 });
-  ctx.out(t.created(created.nimi, created.osoite));
+  done(ctx, t.created(created.nimi, created.osoite));
   saveAndTell(ctx, org, { nimi: created.nimi, vmid: created.vmid });
+  ctx.gap();
   ctx.out(t.nextPush);
   return 0;
 }
@@ -346,6 +395,7 @@ async function linkTo(ctx, org, deployable) {
     p = deployable[await ctx.choose(t.pickProject, deployable.map((x) => `${x.nimi}${x.osoite ? ` · ${x.osoite}` : ""}`), 0)];
   }
   saveAndTell(ctx, org, p);
+  ctx.gap();
   ctx.out(t.nextPush);
   return 0;
 }
@@ -361,7 +411,8 @@ async function link(ctx) {
 // push
 
 // Kohde: --project (organisaation listalta) tai kansion yhteys; ilman niitä päätteessä init.
-async function target(ctx) {
+// noInit: komento (promote) ei aloita initiä yhdistämättömässä kansiossa.
+async function target(ctx, { noInit = false } = {}) {
   if (ctx.args.project) {
     const org = await pickOrg(ctx);
     const p = (await projectList(ctx, org)).projektit.find((x) => x.nimi === ctx.args.project);
@@ -369,8 +420,10 @@ async function target(ctx) {
     return { org, projekti: p.nimi, vmid: p.vmid };
   }
   const linked = readLink(ctx.cwd);
+  // Toisen portaalin (esim. testiympäristön) projektinumero osoittaisi tässä portaalissa eri projektiin.
+  if (linked?.portaali && linked.portaali !== ctx.portal) throw new UserError(ctx.t.linkOtherPortal(linked.portaali, ctx.portal));
   if (linked) return { org: linked.organisaatio, projekti: linked.projekti, vmid: linked.vmid };
-  if (!ctx.interactive) throw new UserError(ctx.t.notLinked);
+  if (!ctx.interactive || noInit) throw new UserError(ctx.t.notLinked);
   ctx.err(ctx.t.notLinkedInit);
   // init kertoo itse perumisen ("Peruttu."), joten tässä ei toista viestiä: null = push päättyy paluukoodiin 1.
   if ((await init(ctx)) !== 0) return null;
@@ -393,7 +446,7 @@ async function push(ctx) {
   if (unreadable.length) throw new UserError(t.unreadable(unreadable.slice(0, 5).map((u) => `${u.path} (${u.code})`), unreadable.length));
   const files = entries.filter((e) => e.type === "file");
   if (!files.length) throw new UserError(t.emptyFolder);
-  for (const s of skipped) ctx.err(`${t.warnMark} ${s.reason === "size" ? t.skippedBig(s.path, sizeText(s.size, ctx.lang)) : t.skippedLink(s.path)}`);
+  for (const s of skipped) warn(ctx, s.reason === "size" ? t.skippedBig(s.path, sizeText(s.size, ctx.lang)) : t.skippedLink(s.path));
   let pkg;
   try {
     pkg = await packEntries(entries);
@@ -402,7 +455,7 @@ async function push(ctx) {
     if (e.code === "unreadable") throw new UserError(t.unreadable([`${e.path} (${e.reason})`], 1));
     throw e;
   }
-  ctx.err(t.uploading(files.length, sizeText(pkg.length, ctx.lang), dest.projekti));
+  ctx.err(t.uploading(files.length, sizeText(pkg.length, ctx.lang), ctx.c.bold(dest.projekti)));
 
   // Uusi projekti voi olla vielä luonnissa: odotetaan enintään 5 min.
   let started;
@@ -424,7 +477,7 @@ async function push(ctx) {
       if (e instanceof ApiError && e.status === 0 && e.data?.timeout) throw new UserError(t.uploadTimedOut(deploymentsUrl));
       // Projekti luonnissa: portaalin koodi syy = luonti_kesken (vanhempi portaali: tunnistus tekstistä).
       if (e instanceof ApiError && e.status === 409 && (e.data?.syy === "luonti_kesken" || (!e.data?.syy && /valmis|ready/i.test(e.message))) && ctx.now() < until) {
-        ctx.err(t.waitingCreate);
+        ctx.err(ctx.c.dim(t.waitingCreate));
         await ctx.sleep(10_000);
         continue;
       }
@@ -432,7 +485,15 @@ async function push(ctx) {
     }
   }
   const label = prod ? t.deployment(started.numero) : t.build(started.numero);
-  ctx.err(t.queued(label, started.sovellus));
+  ctx.err(t.queued(ctx.c.bold(label), started.sovellus));
+  ctx.gap();
+  return follow(ctx, dest, started.numero, prod, started.osoite);
+}
+
+// Seuraa julkaisua tai rakennusta numerolla, kunnes se päättyy (push ja promote). Paluukoodi 0 = onnistui.
+async function follow(ctx, dest, numero, prod, address) {
+  const { t } = ctx;
+  const deploymentsUrl = `${ctx.portal}/${dest.projekti}/julkaisut`;
 
   // Seuranta: uusi vaihe kerran, aika vaiheen alusta. Seuranta päättyy aina: julkaisu kestää yli FOLLOW_MAX_MS tai
   // Boggo Cloudiin ei saada yhteyttä CONNECTION_LOST_MS:ään. Kummassakin paluukoodi on 1, koska julkaisun tulos ei ole
@@ -445,16 +506,18 @@ async function push(ctx) {
   for (;;) {
     await ctx.sleep(2000);
     if (ctx.now() - began > FOLLOW_MAX_MS) {
-      ctx.err(`${t.warnMark} ${t.stillRunning(followUrl)}`);
+      ctx.gap();
+      warn(ctx, t.stillRunning(followUrl));
       return 1;
     }
     try {
-      d = (await ctx.api("GET", `/api/cli/projektit/${dest.vmid}/julkaisut/${started.numero}`, { org: dest.org })).data;
+      d = (await ctx.api("GET", `/api/cli/projektit/${dest.vmid}/julkaisut/${numero}`, { org: dest.org })).data;
       lastOk = ctx.now();
     } catch (e) {
       if (!(e instanceof ApiError && (e.status === 0 || e.status >= 500))) throw e;
       if (ctx.now() - lastOk > CONNECTION_LOST_MS) {
-        ctx.err(`${t.warnMark} ${t.lostTrack(followUrl)}`);
+        ctx.gap();
+        warn(ctx, t.lostTrack(followUrl));
         return 1;
       }
       continue;
@@ -462,36 +525,92 @@ async function push(ctx) {
     for (const s of d.steps ?? []) {
       if (shown.has(s.vaihe) || !STAGES.includes(s.vaihe)) continue;
       shown.add(s.vaihe);
-      ctx.err(`  ${t.stages[s.vaihe] ?? s.vaihe}…`);
+      ctx.err(`  ${ctx.c.cyan("›")} ${t.stages[s.vaihe] ?? s.vaihe}…`);
     }
     const status = d.deployment.status;
     if (status === "valmis" || status === "epaonnistui" || status === "korvattu") break;
   }
   const secs = Math.round((ctx.now() - began) / 1000);
+  ctx.gap();
   if (d.deployment.status === "valmis") {
     if (prod) {
-      ctx.out(t.deployed(secs));
-      ctx.out(`  ${started.osoite}`);
+      done(ctx, t.deployed(secs));
+      if (address) ctx.out(`  ${ctx.o.underline(address)}`);
     } else {
-      ctx.out(t.built(secs));
-      ctx.out(t.nextProd);
+      done(ctx, t.built(secs));
+      ctx.gap();
+      // Portaali kertoo, voiko rakennuksen julkaista sellaisenaan (rakentajan sopimus luku 9); muuten uusi rakennus --prodilla.
+      if (d.deployment.promote) {
+        rememberBuild(ctx, dest, numero);
+        ctx.out(t.nextPromote);
+      } else ctx.out(t.nextProd);
     }
     return 0;
   }
   if (d.deployment.status === "korvattu") {
-    ctx.out(t.replaced);
+    warn(ctx, t.replaced);
     return 1;
   }
-  ctx.err(`${t.errorMark} ${d.deployment.error ?? t.failed}`);
+  ctx.err(`${ctx.c.red(ctx.c.bold(t.errorMark))} ${d.deployment.error ?? t.failed}`);
   // Rakennuksen loki kehittäjälle (portaali antaa sen vain kehittäjän roolilla): viimeiset rivit.
   const lines = (d.log ?? []).filter((l) => l.taso !== "info" || l.vaihe === "rakennetaan" || l.lahde === "sovellus").slice(-25);
   if (lines.length) {
-    ctx.err("");
-    for (const l of lines) ctx.err(`  ${l.teksti}`);
+    ctx.gap();
+    for (const l of lines) ctx.err(`  ${l.taso === "virhe" ? ctx.c.red(l.teksti) : ctx.c.dim(l.teksti)}`);
   }
-  ctx.err("");
+  ctx.gap();
   ctx.err(t.seeLog(`${ctx.portal}/${dest.projekti}/julkaisut`));
   return 1;
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// promote
+
+// Viimeisin julkaistavissa oleva rakennus kansion yhteyteen (.boggo/projekti.json), jotta boggo promote löytää sen ilman numeroa.
+function rememberBuild(ctx, dest, numero) {
+  const linked = readLink(ctx.cwd);
+  if (!linked || linked.vmid !== dest.vmid) return;
+  try {
+    saveLink(ctx.cwd, { ...linked, rakennus: numero });
+  } catch {
+    /* ei estä mitään: boggo promote <numero> toimii silti */
+  }
+}
+
+// boggo promote [numero]: julkaisee onnistuneen rakennuksen (boggo push) tuotantoon ilman uutta rakennusta. Ilman numeroa kansion
+// viimeisin rakennus. Julkiset muuttujat (NEXT_PUBLIC_, VITE_) ovat rakennuksessa: jos ne ovat muuttuneet, kysytään (tai --force).
+async function promote(ctx) {
+  const { t } = ctx;
+  requireLogin(ctx);
+  const given = ctx.args.positionals?.[0];
+  if (given !== undefined && !/^[1-9]\d{0,8}$/.test(given)) throw new UserError(t.badBuildNumber(given));
+  const dest = await target(ctx, { noInit: true });
+  if (!dest) return 1;
+  const linked = readLink(ctx.cwd);
+  const numero = given !== undefined ? Number(given) : linked?.vmid === dest.vmid ? linked.rakennus : undefined;
+  if (!Number.isSafeInteger(numero) || numero <= 0) throw new UserError(t.noBuild);
+  let started;
+  let force = Boolean(ctx.args.force);
+  for (;;) {
+    try {
+      started = (
+        await ctx.api("POST", `/api/cli/projektit/${dest.vmid}/julkaisut/${numero}`, { org: dest.org, body: force ? { pakota: true } : {} })
+      ).data;
+      break;
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 409 && e.data?.muuttujat === "muuttuneet") || force) throw e;
+      warn(ctx, e.message);
+      if (!ctx.interactive) throw new UserError(t.varsChangedForce);
+      if (!(await ctx.confirm(t.promoteAnyway))) {
+        ctx.out(t.cancelled);
+        return 1;
+      }
+      force = true;
+    }
+  }
+  ctx.err(t.promoting(ctx.c.bold(t.build(numero)), ctx.c.bold(t.deployment(started.numero))));
+  ctx.gap();
+  return follow(ctx, dest, started.numero, true, started.osoite);
 }
 
 // ---------------------------------------------------------------------------------------------------------

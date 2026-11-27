@@ -503,3 +503,174 @@ test("login: portaalin omat virheet näytetään sellaisinaan (429 aloituksessa,
   assert.match(r.err, /Virhe: Kirjautuminen peruttiin selaimessa\./);
   assert.doesNotMatch(r.err, /ei vielä tue/);
 });
+
+// ---------------------------------------------------------------------------------------------------------
+// Tulosteen ilme (Donin pyyntö 27.11.2026): välit osien väliin, värit ja lihavoinnit vain päätteeseen.
+
+// together: stdout ja stderr samaan virtaan kuten päätteessä (välit lasketaan yhteisestä tulosteesta).
+async function runColors(argv, { cwd, portal, env = {}, tty = true, together = false }) {
+  const stdout = sink();
+  const stderr = together ? stdout : sink();
+  stdout.isTTY = tty;
+  stderr.isTTY = tty;
+  const stdin = new PassThrough();
+  stdin.isTTY = false;
+  stdin.end();
+  const code = await main({
+    argv,
+    env: { BOGGO_LANG: "fi", BOGGO_URL: "https://portaali.test", BOGGO_NO_BROWSER: "1", ...CI, ...env },
+    stdout,
+    stderr,
+    stdin,
+    home: mkdtempSync(join(tmpdir(), "boggo-koti-")),
+    cwd,
+    fetch: portal.fetch,
+    sleep: async () => {},
+  });
+  return { code, out: stdout.text, err: stderr.text };
+}
+
+const ESC = "\u001b[";
+
+test("ilme: välit osien välissä, ei kahta tyhjää riviä peräkkäin, ei värejä putkeen", async () => {
+  const cwd = linkedProject();
+  const r = await runColors(["push", "--prod"], { cwd, portal: fakePortal(), tty: false, together: true });
+  assert.equal(r.code, 0, r.out);
+  assert.ok(!r.out.includes(ESC), "ei värikoodeja ilman päätettä");
+  assert.match(r.out, /^\nLähetetään 2 tiedostoa/, "tyhjä rivi komennon alussa");
+  assert.match(r.out, /aloitettu \(NextJS\)\.\n\n {2}› Puretaan paketti…/);
+  assert.match(r.out, /…\n\n✓ Julkaistu \(\d+ s\):\n {2}https:\/\/kauppa\.boggo\.app\n\n$/, "tulos omana osanaan, tyhjä rivi lopussa");
+  assert.ok(!r.out.includes("\n\n\n"), "ei kahta tyhjää riviä peräkkäin");
+
+  const fail = await runColors(["push", "--prod"], { cwd, portal: fakePortal({ fail: true }), tty: false, together: true });
+  assert.match(fail.out, /…\n\nVirhe: Rakennus epäonnistui\. Katso rakennusloki\.\n\n {2}npm ERR! missing script: build\n\nKoko loki: /);
+  assert.ok(!fail.out.includes("\n\n\n"));
+
+  const one = await runColors(["push"], { cwd: linkedProject(), portal: fakePortal(), tty: false, together: true });
+  assert.ok(!one.out.includes("\n\n\n"));
+});
+
+test("ilme: päätteessä värit ja korostukset, NO_COLOR poistaa ne, --json pysyy puhtaana", async () => {
+  const cwd = linkedProject();
+  const r = await runColors(["push"], { cwd, portal: fakePortal() });
+  assert.equal(r.code, 0, r.err);
+  assert.ok(r.err.includes(`${ESC}1mkauppa${ESC}22m`), "projektin nimi lihavoitu");
+  assert.ok(r.out.includes(`${ESC}32m✓${ESC}39m`), "onnistuminen vihreällä");
+  assert.ok(r.out.includes(`${ESC}36mboggo push --prod${ESC}39m`), "seuraava komento korostettu");
+
+  const fail = await runColors(["push", "--prod"], { cwd, portal: fakePortal({ fail: true }) });
+  assert.ok(fail.err.includes(`${ESC}31m${ESC}1mVirhe:${ESC}22m${ESC}39m`), "virhe punaisella");
+  assert.ok(fail.err.includes(`${ESC}36mhttps://portaali.test/kauppa/julkaisut${ESC}39m`), "osoite korostettu ilman pistettä");
+
+  const plain = await runColors(["push"], { cwd, portal: fakePortal(), env: { NO_COLOR: "1" } });
+  assert.ok(!plain.out.includes(ESC) && !plain.err.includes(ESC));
+
+  const json = await runColors(["whoami", "--json"], { cwd, portal: fakePortal() });
+  assert.equal(JSON.parse(json.out).organisaatio, "boggo");
+});
+
+// Rakennuksen julkaisu (rakentajan sopimus luku 9, portaalin migraatio 0066): boggo push → boggo promote ilman uutta rakennusta.
+function promotePortal({ promotable = true, varsChanged = false } = {}) {
+  const base = fakePortal({ follow: () => new Response(JSON.stringify({ deployment: { status: "valmis", promote: promotable }, steps: [], log: [] }), { status: 200 }) });
+  const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  const fetch = async (url, init = {}) => {
+    const p = new URL(url).pathname;
+    if (p === "/api/cli/projektit/1234/julkaisut/7" && init.method === "POST") {
+      base.calls.push({ method: "POST", path: p, body: init.body });
+      if (varsChanged && !JSON.parse(init.body).pakota)
+        return json(409, { error: "Julkiset ympäristömuuttujat ovat muuttuneet rakennuksen jälkeen.", muuttujat: "muuttuneet" });
+      return json(202, { numero: 8, osoite: "https://kauppa.boggo.app" });
+    }
+    if (p === "/api/cli/projektit/1234/julkaisut/8") {
+      base.calls.push({ method: init.method, path: p });
+      return json(200, { deployment: { status: "valmis" }, steps: [{ vaihe: "siirretaan", alkoi: "2026-11-27T12:00:00Z" }], log: [] });
+    }
+    return base.fetch(url, init);
+  };
+  return { fetch, calls: base.calls };
+}
+
+test("promote: push muistaa julkaistavan rakennuksen, promote julkaisee sen ilman uutta pakettia", async () => {
+  const portal = promotePortal();
+  const home = mkdtempSync(join(tmpdir(), "boggo-koti-"));
+  const cwd = linkedProject();
+  const built = await run(["push"], { home, cwd, portal, env: CI });
+  assert.equal(built.code, 0);
+  assert.match(built.out, /boggo promote/);
+  assert.equal(JSON.parse(readFileSync(join(cwd, ".boggo", "projekti.json"), "utf8")).rakennus, 7);
+  const uploads = portal.calls.filter((c) => c.path === "/api/cli/projektit/1234/julkaisut").length;
+  const r = await run(["promote"], { home, cwd, portal, env: CI });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /Rakennus #7 tuotantoon: Julkaisu #8 jonossa/);
+  assert.match(r.out, /https:\/\/kauppa\.boggo\.app/);
+  assert.equal(portal.calls.filter((c) => c.path === "/api/cli/projektit/1234/julkaisut").length, uploads, "ei uutta pakettia");
+  assert.deepEqual(JSON.parse(portal.calls.find((c) => c.method === "POST" && c.path.endsWith("/julkaisut/7")).body), {});
+});
+
+test("promote: rakennusta ei voi julkaista → vihje --prodiin; ei rakennusta tai väärä numero → selkeä virhe", async () => {
+  const portal = promotePortal({ promotable: false });
+  const home = mkdtempSync(join(tmpdir(), "boggo-koti-"));
+  const cwd = linkedProject();
+  const built = await run(["push"], { home, cwd, portal, env: CI });
+  assert.match(built.out, /boggo push --prod/);
+  assert.doesNotMatch(built.out, /boggo promote/);
+  const none = await run(["promote"], { home, cwd, portal, env: CI });
+  assert.equal(none.code, 1);
+  assert.match(none.err, /ei ole julkaistavaa rakennusta/);
+  const bad = await run(["promote", "abc"], { home, cwd, portal, env: CI });
+  assert.equal(bad.code, 1);
+  assert.match(bad.err, /abc ei ole rakennuksen numero/);
+});
+
+test("promote: julkiset muuttujat muuttuneet → CI:ssä virhe ja --force-vihje, --force lähettää pakota", async () => {
+  const portal = promotePortal({ varsChanged: true });
+  const home = mkdtempSync(join(tmpdir(), "boggo-koti-"));
+  const cwd = linkedProject();
+  const r = await run(["promote", "7"], { home, cwd, portal, env: CI });
+  assert.equal(r.code, 1);
+  assert.match(r.err, /muuttuneet/);
+  assert.match(r.err, /--force/);
+  const f = await run(["promote", "7", "--force"], { home, cwd, portal, env: CI });
+  assert.equal(f.code, 0, f.err);
+  assert.deepEqual(JSON.parse(portal.calls.filter((c) => c.method === "POST" && c.path.endsWith("/julkaisut/7")).at(-1).body), { pakota: true });
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// Tietoturvatarkistus (27.11.2026)
+
+test("tietoturva: päätteen ohjauskoodit pois ulkoa tulevasta tekstistä, värikoodit sallitaan", async () => {
+  const cwd = linkedProject();
+  const evil = "\u001b]52;c;cGFoYQ==\u0007\u001b[2J\u001b[1;1HTyhjä ruutu\r\u001b[31mpunainen\u001b[39m";
+  const follow = () =>
+    new Response(JSON.stringify({ deployment: { status: "epaonnistui", error: `Virhe ${evil}` }, steps: [], log: [{ vaihe: "rakennetaan", taso: "virhe", teksti: evil }] }), {
+      status: 200,
+    });
+  const r = await run(["push", "--prod"], { home: mkdtempSync(join(tmpdir(), "boggo-koti-")), cwd, portal: fakePortal({ follow }), env: CI });
+  assert.equal(r.code, 1);
+  assert.ok(!/\u001b\]|\u0007|\u001b\[2J|\u001b\[1;1H|\r/.test(r.err), JSON.stringify(r.err));
+  assert.ok(r.err.includes("Tyhjä ruutu\u001b[31mpunainen\u001b[39m"), "värikoodi säilyy");
+});
+
+test("tietoturva: tunnus vain https:llä (http vain omalla koneella), virheellinen BOGGO_URL ei kaada", async () => {
+  const cwd = linkedProject();
+  for (const url of ["http://portaali.test", "ftp://portaali.test", "ei osoite"]) {
+    const portal = fakePortal();
+    const r = await run(["whoami"], { home: mkdtempSync(join(tmpdir(), "boggo-koti-")), cwd, portal, env: { ...CI, BOGGO_URL: url } });
+    assert.equal(r.code, 1, url);
+    assert.match(r.err, /pitää alkaa https:\/\//, url);
+    assert.equal(portal.calls.length, 0, `${url}: ei yhtään pyyntöä`);
+  }
+  const portal = fakePortal();
+  const local = await run(["whoami"], { home: mkdtempSync(join(tmpdir(), "boggo-koti-")), cwd, portal, env: { ...CI, BOGGO_URL: "http://localhost:3000" } });
+  assert.equal(local.code, 0, local.err);
+});
+
+test("tietoturva: toisen portaalin kansioyhteys ei julkaise tämän portaalin projektiin", async () => {
+  const cwd = linkedProject();
+  writeFileSync(join(cwd, ".boggo", "projekti.json"), JSON.stringify({ organisaatio: "boggo", projekti: "kauppa", vmid: 1234, portaali: "https://testi.boggo.fi" }));
+  const portal = fakePortal();
+  const r = await run(["push", "--prod"], { home: mkdtempSync(join(tmpdir(), "boggo-koti-")), cwd, portal, env: CI });
+  assert.equal(r.code, 1);
+  assert.match(r.err, /toisessa Boggo Cloudissa \(https:\/\/testi\.boggo\.fi\)/);
+  assert.ok(!portal.calls.some((c) => c.path.includes("/julkaisut")), "ei lähetystä");
+});

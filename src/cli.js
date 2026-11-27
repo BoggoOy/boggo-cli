@@ -5,6 +5,7 @@ import { context, runCommand } from "./commands.js";
 import { readConfig, updateConfig } from "./config.js";
 import { askLanguage, canAsk, envLanguage, parseLanguage, systemLanguage } from "./lang.js";
 import { COMMANDS, GROUPS, LANGUAGE_SETTING_NAMES, TEXT } from "./messages.js";
+import { painter } from "./paint.js";
 
 export const VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
@@ -84,14 +85,13 @@ function run(io, args, command, rest, language) {
   if (COMMANDS[command]?.coming) {
     const shown = [command];
     if (command === "env" && ["pull", "ls"].includes(rest[0])) shown.push(rest[0]);
-    if (command === "push" && args.flags.includes("--prod")) shown.push("--prod");
     return fail(io, t.comingSoon(shown.join(" ")));
   }
 
   if (args.badOption) return fail(io, t.unknownOption(args.badOption));
   if (args.missingValue) return fail(io, t.optionNeedsValue(args.missingValue));
-  if (LIVE_COMMANDS.includes(command)) return runCommand(context(io, language.lang, args.options, VERSION), command, rest);
-
+  // Komennon omat argumentit (boggo promote <numero>) positionals-kenttään.
+  if (LIVE_COMMANDS.includes(command)) return runCommand(context(io, language.lang, { ...args.options, positionals: rest }, VERSION), command);
 
   return fail(io, t.unknownCommand(command));
 }
@@ -152,7 +152,7 @@ function fail(io, message) {
 }
 
 // Komennot, jotka puhuvat Boggo Cloudin kanssa (src/commands.js).
-const LIVE_COMMANDS = ["login", "logout", "whoami", "projects", "init", "link", "push", "open"];
+const LIVE_COMMANDS = ["login", "logout", "whoami", "projects", "init", "link", "push", "promote", "open"];
 // Valinnat: arvolliset ja kytkimet (options-olion nimi).
 const VALUE_OPTIONS = { "--project": "project", "--org": "org", "--name": "name", "--size": "size", "--use": "use" };
 const BOOLEAN_OPTIONS = { "--prod": "prod", "--yes": "yes", "-y": "yes", "--json": "json", "--portal": "portal", "--force": "force" };
@@ -194,13 +194,6 @@ export function parseArgs(argv) {
     else args.positionals.push(arg);
   }
   return args;
-}
-
-// Värit vain päätteeseen, ei NO_COLORilla (https://no-color.org) eikä TERM=dumb-päätteessä.
-export function painter(stream, env) {
-  const on = Boolean(stream?.isTTY) && !(env.NO_COLOR !== undefined && env.NO_COLOR !== "") && env.TERM !== "dumb";
-  const wrap = (open, close) => (s) => (on ? `\u001b[${open}m${s}\u001b[${close}m` : String(s));
-  return { bold: wrap(1, 22), dim: wrap(2, 22), cyan: wrap(36, 39) };
 }
 
 function pad(text, width) {

@@ -9,7 +9,8 @@ npx boggo init           # luo projekti tästä kansiosta (tai valitse olemassa 
 npx boggo push --prod    # julkaise: https://<nimi>.boggo.app
 ```
 
-`boggo push` ilman `--prod` rakentaa julkaisematta. Kaikki samat toiminnot ovat myös portaalissa.
+`boggo push` ilman `--prod` rakentaa julkaisematta, ja `boggo promote` julkaisee sen rakennuksen tuotantoon rakentamatta uudelleen
+(24 tunnin ajan). Kaikki samat toiminnot ovat myös portaalissa.
 
 ## Asennus
 
@@ -32,6 +33,7 @@ Tai ilman asennusta: `npx boggo help`. Vaatii Node.js 18:n tai uudemman.
 | `boggo projects`, `link`, `open` | Projektit, kansion yhdistäminen projektiin, projektin avaus selaimessa | toimii |
 | `boggo push` | Rakenna ja tarkista julkaisematta | toimii |
 | `boggo push --prod` | Rakenna ja julkaise tuotantoon | toimii |
+| `boggo promote [numero]` | Julkaise rakennus tuotantoon rakentamatta uudelleen | toimii, kun Boggo Cloud ottaa sen käyttöön |
 | `boggo env pull`, `env ls` | Ympäristömuuttujat tiedostoon `.env.local`, muuttujien lista | tulossa |
 | `boggo logs` | Sovelluksen lokit | tulossa |
 
@@ -67,7 +69,7 @@ Värit vain päätteessä; `NO_COLOR` poistaa ne.
 ## English
 
 Boggo Cloud command-line tool. Install with `npm i -g boggo` (Node.js 18 or newer) and run `boggo help`. Create and deploy a
-project: `boggo login`, then in your project folder `boggo init` and `boggo push --prod` (without `--prod` it only builds). Also
+project: `boggo login`, then in your project folder `boggo init` and `boggo push --prod` (without `--prod` it only builds; `boggo promote` then deploys that build without rebuilding). Also
 `whoami`, `projects`, `link`, `open` and `logout`; `env pull`, `env ls` and `logs` are coming soon. In CI set `BOGGO_TOKEN`; `boggo push`
 exits with 0 only when the build or deployment succeeded.
 
